@@ -3,7 +3,8 @@
 The source implementation and local synthetic tests do not connect a Google
 account, create production resources, deploy a Worker, or modify real playlists.
 Keep automatic processing paused until the following operator-led setup and
-bounded acceptance test are complete. No production domain has been selected.
+bounded acceptance test are complete. The personal installation uses
+`https://suguri.takuk.me`; deployment does not imply Google authorization.
 
 ## Cloudflare setup
 
@@ -43,9 +44,19 @@ user's Suguri data. The deployment must prove the intended MCP login/gateway
 delivers a valid Access assertion; this code does not implement a separate OAuth
 authorization server for MCP clients.
 
-Use the pinned CLI's built-in help to inspect deployment commands and the exact
-account/resource plan. This repository intentionally has no automatic deployment
-workflow. Local `mise run ci` and its upload dry run do not deploy.
+The manually dispatched Deploy workflow accepts only current `main`, runs CodeQL
+and the full CI checks, then deploys the checked Worker at 100% traffic. It uses
+the protected `production` environment's `CLOUDFLARE_API_TOKEN` secret and
+`CLOUDFLARE_ACCOUNT_ID` / `SUGURI_CATALOG_DATABASE_ID` variables. The deployment
+token must be account-owned and restricted to this Worker's script tag with
+Individual Workers Editor. Database provisioning/migrations and custom-domain/Cron
+updates use the separately authorized bootstrap procedure; the deploy action has
+`deploy-triggers: false`. Local `mise run ci` and its upload dry run do not deploy.
+
+The initial release may omit both Google client secrets until a dedicated client
+is ready. Google connection then returns `not_configured`, and processing remains
+paused with no connected accounts. Never install fake Google credentials merely
+to make a deployment check pass.
 
 ## Google setup and user action
 
