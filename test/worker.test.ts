@@ -1,12 +1,16 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-describe("local Worker scaffold", () => {
-  it("identifies the scaffold without claiming YouTube readiness", async () => {
+describe("local Worker entrypoint", () => {
+  it("identifies implementation without claiming production verification", async () => {
     const response = await SELF.fetch("https://example.invalid/health");
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(await response.json()).toEqual({ service: "suguri", status: "scaffold" });
+    expect(await response.json()).toEqual({
+      service: "suguri",
+      status: "implemented",
+      productionVerified: false,
+    });
   });
 
   it("supports HEAD without a response body", async () => {
