@@ -1,5 +1,5 @@
 import { appOrigin, authenticate, finishOAuth, startOAuth } from "./auth.ts";
-import { publicFailure } from "./errors.ts";
+import { oauthFailureCode, publicFailure } from "./errors.ts";
 import { runPipeline } from "./pipeline.ts";
 import { expireMetadata } from "./maintenance.ts";
 import { handleApi, handleMcp } from "./transport.ts";
@@ -7,6 +7,7 @@ import { renderApp } from "./ui.ts";
 import { HttpError, json, randomToken } from "./util.ts";
 import { handleWebSub } from "./websub.ts";
 import { publicInfo } from "./public-info.ts";
+import { audit } from "./store.ts";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -50,12 +51,21 @@ export default {
       if (path === "/auth/callback" && request.method === "GET") {
         try {
           return await finishOAuth(request, env, principal);
-        } catch {
+        } catch (error) {
           const cancelled = new URL(request.url).searchParams.get("error") === "access_denied";
+          const code = cancelled ? "cancelled" : oauthFailureCode(error);
+          await audit(
+            env.DB,
+            principal.userId,
+            null,
+            "google_connect_failed",
+            code,
+            principal.actor,
+          ).catch(() => undefined);
           return new Response(null, {
             status: 302,
             headers: {
-              Location: `${appOrigin(env)}/?connection_error=${cancelled ? "cancelled" : "failed"}`,
+              Location: `${appOrigin(env)}/?connection_error=${code}`,
               "Cache-Control": "no-store",
               "Referrer-Policy": "no-referrer",
               "Set-Cookie":

@@ -9,7 +9,8 @@ import {
   startOAuth,
   unseal,
 } from "../src/auth.ts";
-import { hash } from "../src/util.ts";
+import { hash, HttpError } from "../src/util.ts";
+import { oauthFailureCode } from "../src/errors.ts";
 import { resetDatabase, seedUser } from "./helpers.ts";
 import type { Principal } from "../src/model.ts";
 import { execute } from "../src/service.ts";
@@ -17,6 +18,87 @@ import { appState } from "../src/store.ts";
 
 beforeEach(resetDatabase);
 describe("Access identity and Google authorization", () => {
+  it("only exposes allowlisted connection failure codes", () => {
+    expect(oauthFailureCode(new Error("synthetic-secret"))).toBe("failed");
+    expect(oauthFailureCode(new HttpError(502, "synthetic-secret"))).toBe("failed");
+    expect(oauthFailureCode(new HttpError(502, "google_token_http_400"))).toBe(
+      "google_token_http_400",
+    );
+    expect(oauthFailureCode(new HttpError(502, "google_token_http_400_secret"))).toBe("failed");
+    expect(oauthFailureCode(new HttpError(400, "invalid_oauth_state"))).toBe("invalid_oauth_state");
+  });
+
+  it.each([
+    ["invalid_client", "google_client_invalid"],
+    ["invalid_grant", "reconnect_required"],
+    ["secret-provider-detail", "google_token_http_400"],
+  ])(
+    "classifies token exchange failure %s without returning provider details",
+    async (providerError, expected) => {
+      await seedUser("alice");
+      const principal: Principal = { userId: "alice", actor: "user:alice", transport: "browser" };
+      const start = await startOAuth(env, principal);
+      const location = new URL(start.headers.get("Location")!);
+      const request = new Request(
+        `${env.APP_ORIGIN}/auth/callback?state=${location.searchParams.get("state")}&code=synthetic-code`,
+        {
+          headers: { Cookie: start.headers.get("Set-Cookie")!.split(";")[0]! },
+        },
+      );
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          Response.json(
+            { error: providerError, error_description: "synthetic-secret" },
+            { status: 400 },
+          ),
+        );
+      await expect(finishOAuth(request, env, principal, fetcher)).rejects.toMatchObject({
+        code: expected,
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("distinguishes a channel rejected by YouTube from a token exchange failure", async () => {
+    await seedUser("alice");
+    const principal: Principal = { userId: "alice", actor: "user:alice", transport: "browser" };
+    const start = await startOAuth(env, principal);
+    const location = new URL(start.headers.get("Location")!);
+    const request = new Request(
+      `${env.APP_ORIGIN}/auth/callback?state=${location.searchParams.get("state")}&code=synthetic-code`,
+      {
+        headers: { Cookie: start.headers.get("Set-Cookie")!.split(";")[0]! },
+      },
+    );
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          access_token: "synthetic-access",
+          refresh_token: "synthetic-refresh",
+          expires_in: 3600,
+          scope: "https://www.googleapis.com/auth/youtube.force-ssl",
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            error: {
+              errors: [{ reason: "youtubeSignupRequired", message: "synthetic-private-detail" }],
+            },
+          },
+          { status: 401 },
+        ),
+      );
+    await expect(finishOAuth(request, env, principal, fetcher)).rejects.toMatchObject({
+      code: "youtube_channel_unavailable",
+    });
+    expect(await env.DB.prepare("SELECT count(*) AS n FROM connection").first()).toMatchObject({
+      n: 0,
+    });
+  });
+
   it("serializes disconnect against an in-flight OAuth exchange", async () => {
     await seedUser("alice");
     const principal: Principal = { userId: "alice", actor: "user:alice", transport: "browser" };

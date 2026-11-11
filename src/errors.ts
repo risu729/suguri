@@ -1,6 +1,33 @@
 import { HttpError } from "./util.ts";
 import { YouTubeError } from "./youtube.ts";
 
+const oauthCodes = new Set([
+  "invalid_oauth_state",
+  "reconnect_required",
+  "google_client_invalid",
+  "google_unavailable",
+  "invalid_google_response",
+  "youtube_api_disabled",
+  "youtube_channel_unavailable",
+  "youtube_access_denied",
+  "youtube_channel_required",
+  "youtube_scope_required",
+  "channel_change_requires_migration",
+  "not_configured",
+  "encryption_not_configured",
+  "token_unreadable",
+  "busy",
+]);
+
+export function oauthFailureCode(error: unknown): string {
+  if (
+    error instanceof HttpError &&
+    (oauthCodes.has(error.code) || /^google_(?:channel|token)_http_[1-5]\d{2}$/.test(error.code))
+  )
+    return error.code;
+  return "failed";
+}
+
 export function publicFailure(error: unknown): { error: string; status: number } {
   if (error instanceof HttpError) return { error: error.code, status: error.status };
   if (error instanceof YouTubeError) {

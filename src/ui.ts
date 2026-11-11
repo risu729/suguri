@@ -436,9 +436,21 @@ const client = String.raw`
   }).catch(() => {});
   const pageUrl = new URL(window.location.href);
   const connectionError = pageUrl.searchParams.get('connection_error');
-  if (connectionError === 'cancelled' || connectionError === 'failed') {
+  if (connectionError) {
     activeSection = 'settings';
-    announce(connectionError === 'cancelled' ? 'Googleとの接続をキャンセルしました。接続するときは「Googleに接続」を選んでください。' : 'Googleとの接続を完了できませんでした。「Googleに接続」から接続をやり直してください。',connectionError === 'failed');
+    const connectionMessages = {
+      cancelled:'Googleとの接続をキャンセルしました。接続するときは「Googleに接続」を選んでください。',
+      invalid_oauth_state:'接続の有効時間が切れたか、別の接続操作が開始されました。「Googleに接続」からやり直してください。',
+      reconnect_required:'Googleが接続情報を受け付けませんでした。「Googleに接続」からやり直してください。',
+      youtube_channel_required:'選択したアカウントのYouTubeチャンネルを確認できませんでした。普段使っているチャンネルを選択してください。',
+      youtube_channel_unavailable:'Googleが選択したYouTubeチャンネルへのAPI接続を認めませんでした。チャンネルの所有者アカウントと接続設定を確認してください。',
+      youtube_scope_required:'YouTubeへのアクセス許可が足りません。「Googleに接続」から必要な権限を確認してください。',
+      google_client_invalid:'Google連携の認証情報を確認できません。管理者による設定確認が必要です。',
+      youtube_api_disabled:'YouTube APIが利用できません。管理者によるGoogle設定の確認が必要です。',
+      youtube_access_denied:'GoogleがYouTubeへのアクセスを拒否しました。選択したチャンネルと権限を確認してください。',
+      channel_change_requires_migration:'別のチャンネルへの接続変更には、既存の保存先とデータの移行が必要です。'
+    };
+    announce(Object.hasOwn(connectionMessages,connectionError) ? connectionMessages[connectionError] : 'Googleとの接続を完了できませんでした。「Googleに接続」から接続をやり直してください。',connectionError !== 'cancelled');
     pageUrl.searchParams.delete('connection_error');
     window.history.replaceState(null,'',pageUrl.pathname+pageUrl.search+pageUrl.hash);
   }

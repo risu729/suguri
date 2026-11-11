@@ -137,11 +137,22 @@ async function googleJson(
   } catch {
     throw new HttpError(502, "invalid_google_response");
   }
-  if (!response.ok)
-    throw new HttpError(
-      response.status === 400 ? 401 : 502,
-      value["error"] === "invalid_grant" ? "reconnect_required" : "google_unavailable",
-    );
+  if (!response.ok) {
+    const error = value["error"];
+    if (error === "invalid_grant") throw new HttpError(401, "reconnect_required");
+    if (error === "invalid_client") throw new HttpError(503, "google_client_invalid");
+    let reason: unknown;
+    if (error && typeof error === "object" && !Array.isArray(error)) {
+      const details = (error as Record<string, unknown>)["errors"];
+      if (Array.isArray(details) && details[0] && typeof details[0] === "object")
+        reason = (details[0] as Record<string, unknown>)["reason"];
+    }
+    if (reason === "accessNotConfigured") throw new HttpError(503, "youtube_api_disabled");
+    if (reason === "youtubeSignupRequired") throw new HttpError(403, "youtube_channel_unavailable");
+    if (reason === "forbidden") throw new HttpError(403, "youtube_access_denied");
+    const stage = url.startsWith("https://www.googleapis.com/youtube/") ? "channel" : "token";
+    throw new HttpError(502, `google_${stage}_http_${response.status}`);
+  }
   return value;
 }
 function tokenValue(value: unknown): string {
