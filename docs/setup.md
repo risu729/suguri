@@ -23,24 +23,29 @@ the reference repositories was copied. No deployment workflow is installed.
 
 ## Repository policy
 
-Private repository; issues enabled; wiki and project boards disabled. Squash-only
+Public repository; issues enabled; wiki and project boards disabled. Squash-only
 merges, automatic deletion of merged branches, branch update support, and web
 commit signoff follow the reference repositories. Workflow permissions default
 to read-only and workflows cannot approve pull requests.
 
 The default-branch ruleset requires a pull request, signed commits, linear
 history, and `CI Check`; blocks force pushes and deletion; and allows repository
-administrators to bypass only through pull requests. Required approval count is
+administrators to bypass only through pull requests. Code scanning blocks new
+CodeQL alerts at all severity levels. Required approval count is
 zero, matching the personal repositories; independent agent review is required
 by AGENTS.md. Auto-merge availability is a setting, not authorization to merge.
 
-On 2026-11-11, this private repository's Advanced Security page offered dependency
-scanning and Dependabot, but no CodeQL or secret-protection controls. The CodeQL
-API returned 403 (not enabled). Those unavailable checks are not required by the
-ruleset, and no paid security product was enabled. betterleaks secret scanning
-and action-security linting run locally and in CI. Dependency graph, Dependabot
-alerts, and automatic security updates are enabled. Actions require full-SHA
-pinning at repository level as well as in lint.
+The owner requested public visibility on 2026-11-11. GitHub Free supports ruleset
+enforcement for public repositories; the earlier private repository's `active`
+ruleset setting alone was not proof of enforcement. See
+[GitHub's ruleset availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets).
+
+CodeQL scans JavaScript/TypeScript and GitHub Actions on pull requests, main
+pushes, and a weekly schedule, using extended security queries. Secret scanning
+and push protection are enabled. betterleaks secret scanning and action-security
+linting also run locally and in CI. Dependency graph, Dependabot alerts, and
+automatic security updates are enabled. Actions require full-SHA pinning at
+repository level as well as in lint. No paid security product was enabled.
 
 Renovate appears in the repository's installed GitHub Apps. Its shared preset and
 coupled dependency groups are configured. A future update PR is still a separate

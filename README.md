@@ -41,4 +41,4 @@ update package.json, run `mise exec -- bun install --lockfile-only`, then
 - [Setup decisions and reference repositories](docs/setup.md)
 - [Implementation backlog](docs/backlog.md)
 
-This is a private project. No open-source license has been selected.
+This is a public repository. No open-source license has been selected.
