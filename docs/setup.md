@@ -16,7 +16,10 @@ the build/runtime group together. A monorepo is unnecessary for this scaffold.
 
 The compatibility date is literal in `cloudflare.config.ts` so the shared
 Renovate manager can discover it. Local types are generated, not hand-written.
-Production observability configuration includes logs and sampled traces.
+The original scaffold enabled logs and sampled traces. The application disables
+automatic request observability because OAuth codes and WebSub capabilities are
+carried in URLs. Redacted operation records are stored in the application ledger;
+edge, proxy, and Access log retention must be reviewed before activation.
 
 No mail, finance, extension, domain, credential, or resource configuration from
 the reference repositories was copied. No deployment workflow is installed.

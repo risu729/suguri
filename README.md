@@ -5,12 +5,15 @@ The name comes from the Japanese word *yorisuguri*: carefully selected.
 
 ## Status
 
-Development setup is implemented: a local Cloudflare Worker, locked tools,
-formatters, linters, runtime tests, build verification, and GitHub CI. The only
-HTTP endpoint is `GET /health` (also `HEAD`), which reports `status: scaffold`.
+The initial application is implemented for local verification: WebSub ingestion,
+per-user rules and Inbox, category-specific private playlists, durable processing,
+Cloudflare Access identity, separate Google authorization, and shared UI/MCP
+operations. The health endpoint reports implementation status, not live readiness.
 
-WebSub ingestion, OAuth, subscription synchronization, filtering, and playlist
-writes are planned. No Google account or Cloudflare resource is connected.
+No real Google account is connected, no production resources have been created,
+and the application has not been deployed or tested with real playlist writes.
+Follow [activation and acceptance](docs/activation.md) before enabling automation.
+AI classification is a future extension; the initial selection engine uses rules.
 
 ## Development
 
@@ -36,7 +39,9 @@ update package.json, run `mise exec -- bun install --lockfile-only`, then
 
 ## Design and research
 
-- [Current architecture and open decisions](docs/architecture.md)
+- [Architecture](docs/architecture.md)
+- [Generalized product requirements](docs/product-requirements.md)
+- [Activation and acceptance](docs/activation.md)
 - [Research archive and provenance](docs/research/README.md)
 - [Setup decisions and reference repositories](docs/setup.md)
 - [Implementation backlog](docs/backlog.md)

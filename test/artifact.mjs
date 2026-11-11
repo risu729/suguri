@@ -14,7 +14,11 @@ const runtime = new Miniflare({ workers: [{ config }] });
 try {
   const response = await runtime.dispatchFetch("https://example.invalid/health");
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { service: "suguri", status: "scaffold" });
+  assert.deepEqual(await response.json(), {
+    service: "suguri",
+    status: "implemented",
+    productionVerified: false,
+  });
   const callback = await runtime.dispatchFetch("https://example.invalid/websub", {
     method: "POST",
     body: "synthetic notification",
