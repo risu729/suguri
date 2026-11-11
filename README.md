@@ -10,10 +10,16 @@ per-user rules and Inbox, category-specific private playlists, durable processin
 Cloudflare Access identity, separate Google authorization, and shared UI/MCP
 operations. The health endpoint reports implementation status, not live readiness.
 
-No real Google account is connected, no production resources have been created,
-and the application has not been deployed or tested with real playlist writes.
+The personal installation has been deployed. Google connection, real notification
+delivery, and playlist writes have separate activation checks; deployment alone
+does not establish their success.
 Follow [activation and acceptance](docs/activation.md) before enabling automation.
 AI classification is a future extension; the initial selection engine uses rules.
+
+Static [application information](https://suguri.takuk.me/info/about) and the
+[privacy policy](https://suguri.takuk.me/info/privacy) support Google OAuth branding.
+Only those information routes and validated WebSub callbacks are public; the
+application, API, authorization routes, and MCP remain protected by Access.
 
 ## Development
 
