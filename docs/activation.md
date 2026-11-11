@@ -65,6 +65,11 @@ to make a deployment check pass.
 2. Configure the consent screen and a Web application OAuth client. Register
    the exact redirect URI `APP_ORIGIN/auth/callback` (replace `APP_ORIGIN` with
    the chosen origin, not the literal text).
+   Use `/info/about` for the homepage and `/info/privacy` for the privacy policy.
+   Configure a narrowly scoped Access application for `/info/*`; these routes
+   serve static public information only. Keep all administration, API, OAuth and
+   MCP routes protected. The public homepage describes this personal installation;
+   review its disclosures before offering the service to anyone else.
 3. Review the consent screen's publishing mode. External/Testing refresh tokens
    for these scopes can expire after seven days. Continuous use needs the
    appropriate publishing/verification setup; personal use has a documented

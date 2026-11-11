@@ -6,11 +6,14 @@ import { handleApi, handleMcp } from "./transport.ts";
 import { renderApp } from "./ui.ts";
 import { HttpError, json, randomToken } from "./util.ts";
 import { handleWebSub } from "./websub.ts";
+import { publicInfo } from "./public-info.ts";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const path = new URL(request.url).pathname;
     try {
+      const info = publicInfo(request);
+      if (info) return info;
       if (path === "/health") {
         if (!["GET", "HEAD"].includes(request.method))
           return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });

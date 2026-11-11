@@ -460,7 +460,7 @@ export function renderApp(nonce = ""): string {
 <body><a class="skip" href="#main">本文へ移動</a><div class="layout">
 <aside class="sidebar"><div class="brand"><span class="brand-mark" aria-hidden="true">❧</span>Suguri</div><p class="tagline">動画を、よりすぐる。</p>
 <nav class="navigation" aria-label="メインメニュー"><button type="button" data-nav="inbox" aria-current="page">受信箱</button><button type="button" data-nav="categories">保存先</button><button type="button" data-nav="rules">ルール</button><button type="button" data-nav="series">シリーズ</button><button type="button" data-nav="settings">接続と設定</button></nav>
-<p class="side-note">Shortsも整理できます。<br>配信中の動画は終了を待って確認します。</p></aside>
+<p class="side-note">Shortsも整理できます。<br>配信中の動画は終了を待って確認します。</p><p class="side-note"><a href="/info/about">Suguriについて</a> · <a href="/info/privacy">プライバシー</a></p></aside>
 <main class="main" id="main"><header class="topbar"><div><p class="eyebrow">自分のための動画棚</p><p id="header-status">読み込み中</p></div><div class="top-actions"><button type="button" id="refresh">更新</button></div></header>
 <div id="message" class="notice" role="status" aria-live="polite"></div><p id="loading" class="loading" role="status">動画棚を読み込んでいます…</p>
 <section id="welcome" class="panel welcome" hidden><p class="eyebrow">Suguriへようこそ</p><h1>見たい動画を、<br>自分のペースで。</h1><p>登録チャンネルの新着から、気になる動画をよりすぐって非公開プレイリストへ。ルールに迷う動画は受信箱に残し、あとから見直せます。</p><p id="welcome-note">ログインすると、自分の動画棚を開けます。YouTubeとの接続は、ログイン後に設定します。</p><a id="welcome-login" class="button primary" href="/cdn-cgi/access/login">ログインして始める</a></section>
