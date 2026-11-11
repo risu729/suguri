@@ -1,0 +1,9 @@
+[default.extend-words]
+suguri = "suguri"
+fumi = "fumi"
+pateat = "pateat"
+kogane = "kogane"
+risu = "risu"
+
+[files]
+extend-exclude = ["docs/research/archive/**"]

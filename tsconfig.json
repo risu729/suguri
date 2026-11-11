@@ -1,0 +1,9 @@
+{
+  "extends": "@risu729/tsconfigs/bundler",
+  "compilerOptions": {
+    "incremental": false,
+    "lib": ["ESNext"],
+    "types": ["@cloudflare/vitest-plugin/types"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "*.config.ts", ".cloudflare/types"]
+}

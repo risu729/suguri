@@ -1,0 +1,87 @@
+#:schema https://mise.jdx.dev/schema/mise.json
+
+min_version = "2026.11.3"
+
+[tools]
+aube = "v2.10.0"
+bun = "1.4.4"
+node = "26.13.0"
+python = "3.14.10"
+hk = "2.12.0"
+"npm:oxlint" = "1.93.0"
+oxfmt = "0.75.0"
+jactionlint = "2.5.0"
+shellcheck = "0.11.0"
+ghalint = "1.6.0"
+pinact = "5.0.2"
+zizmor = "1.32.0"
+tombi = "1.11.1"
+rumdl = "0.3.2"
+yamlfmt = "0.21.0"
+uv = "0.13.7"
+yamllint = "1.38.0"
+typos = "1.52.1"
+pkl = "0.33.0"
+betterleaks = "1.10.0"
+
+[settings]
+lockfile = true
+lockfile_mode = "generate"
+lockfile_platforms = ["linux-x64", "windows-x64"]
+
+[settings.npm]
+package_manager = "bun"
+
+[env]
+_.path = ["{{config_root}}/node_modules/.bin"]
+
+[tasks.install]
+description = "Install the exact locked dependencies."
+run = "aube install --frozen-lockfile"
+
+[tasks.typecheck]
+description = "Check TypeScript without emitting files."
+depends = ["types"]
+run = "tsc --noEmit"
+
+[tasks.types]
+description = "Generate binding and runtime types from native Cloudflare configuration."
+run = "cf workers types"
+
+[tasks.build]
+description = "Build the Worker using the pinned Cloudflare toolchain."
+run = "cf build --mode production"
+
+[tasks.test]
+description = "Run synthetic HTTP tests inside the local Workers runtime."
+run = "vitest run"
+
+[tasks."check:output"]
+description = "Validate production Build Output without contacting deployed resources."
+depends = ["build"]
+run = "cf workers versions create --prebuilt --mode production --worker suguri --dry-run"
+
+[tasks."test:artifact"]
+description = "Smoke-test the built Worker in the local Workers runtime."
+depends = ["build"]
+run = "node test/artifact.mjs"
+
+[tasks.dev]
+description = "Start the local Worker. No remote bindings are configured."
+run = "cf dev"
+
+[tasks.check]
+description = "Run all linters, security checks, and type checking."
+run = "hk check --all --no-progress --no-fail-fast"
+
+[tasks.ci]
+description = "Run the same checks as GitHub Actions."
+depends = ["check", "test", "test:artifact", "check:output"]
+
+[tasks.fix]
+description = "Apply formatter and linter fixes."
+run = "hk fix --all --no-progress --no-fail-fast"
+
+[tasks."hooks:install"]
+description = "Install the local pre-commit hook."
+run = "hk install --mise"

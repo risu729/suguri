@@ -1,0 +1,7 @@
+savePrefix: ""
+allowBuilds:
+  esbuild: true
+  workerd: true
+paranoid: true
+advisoryBloomCheck: "on"
+enableGlobalVirtualStore: false
