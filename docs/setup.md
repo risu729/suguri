@@ -52,7 +52,10 @@ On 2026-11-11, `mise run fix` and `mise run ci` passed in WSL Ubuntu 26.04 with
 mise 2026.11.5. The CI task checked all linters, generated types and TypeScript,
 four local Workers tests, the production build, built-bundle smoke checks, and
 the cf prebuilt upload dry run. The research archive hash remained unchanged.
-Independent agent review found no actionable source/configuration issues.
+Independent agent review found no actionable source/runtime issues and identified
+missing dependency-graph locks for npm-installed lint tools. The mise npm backend
+now explicitly uses embedded aube, with generated tool graphs committed alongside
+the Python lint-tool graph.
 
 Linux and Windows tool versions are locked. Windows runtime execution has not
 been tested; the verified local execution environment is WSL/Linux.

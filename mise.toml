@@ -30,7 +30,7 @@ lockfile_mode = "generate"
 lockfile_platforms = ["linux-x64", "windows-x64"]
 
 [settings.npm]
-package_manager = "bun"
+package_manager = "aube"
 
 [env]
 _.path = ["{{config_root}}/node_modules/.bin"]

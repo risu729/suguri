@@ -131,11 +131,13 @@ url = "https://nodejs.org/dist/v26.13.0/node-v26.13.0-win-x64.zip"
 
 [[tools."npm:oxlint"]]
 version = "1.93.0"
+aube = { path = ".mise/locks/npm-oxlint/1.93.0", digest = "sha256:3f84da90d1a47ab7459824c66884d9a093c089c2f79bf391575aef880c7b3d32" }
 backend = "npm:oxlint"
 specifiers = ["1.93.0"]
 
 [[tools.oxfmt]]
 version = "0.75.0"
+aube = { path = ".mise/locks/oxfmt/0.75.0", digest = "sha256:1d4f470a5dbba272218132db6ff9ba1911075d29dcd3253a0e02b4a5037a8a23" }
 backend = "npm:oxfmt"
 specifiers = ["0.75.0"]
 
