@@ -1,0 +1,87 @@
+name: Deploy
+on:
+  workflow_dispatch:
+concurrency:
+  group: production-deploy-caller
+  cancel-in-progress: false
+permissions: {}
+defaults:
+  run:
+    shell: bash
+jobs:
+  security:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+      security-events: write # Allow the called CodeQL workflow to publish results.
+    uses: $/.github/workflows/codeql.yml
+  deploy:
+    name: Deploy Worker
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: [security]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    environment: production
+    env:
+      SUGURI_CATALOG_DATABASE_ID: ${{ vars.SUGURI_CATALOG_DATABASE_ID }}
+    steps:
+      - name: Checkout the dispatched commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require the provisioned catalog database
+        run: |
+          if [[ ! "${SUGURI_CATALOG_DATABASE_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            echo '::error::Set the production SUGURI_CATALOG_DATABASE_ID variable after provisioning and migrating the catalog database.'
+            exit 1
+          fi
+          echo "::add-mask::${SUGURI_CATALOG_DATABASE_ID}"
+      - name: Install locked tools
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          version: 2026.11.6
+          install_args: --locked
+          cache: "false"
+      - name: Install dependencies
+        run: mise run install
+      - name: Check repository
+        run: mise run ci
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Validate the checked Worker with the shared deploy action
+        uses: risu729/wrangler-deploy-action@c85532bf934238e9811676cbf10a4d08ff88ae12 # v3.0.0
+        with:
+          mode: dry-run
+          worker: suguri
+          build-mode: production
+          production-strategy: versions
+      - name: Refuse an outdated dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "${current_sha}" != "${GITHUB_SHA}" ]]; then
+            echo '::error::Main changed after this deployment was dispatched. Dispatch a new run from current main.'
+            exit 1
+          fi
+      - name: Deploy the checked Worker
+        uses: risu729/wrangler-deploy-action@c85532bf934238e9811676cbf10a4d08ff88ae12 # v3.0.0
+        with:
+          mode: production
+          worker: suguri
+          build-mode: production
+          production-strategy: versions
+          deploy-triggers: "false"
+          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare-account-id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Record the deployed commit
+        run: |-
+          {
+            printf '### Worker deployment\n\n'
+            printf 'Commit: %s\n\n' "${GITHUB_SHA}"
+            printf 'Run: %s/%s/actions/runs/%s\n\n' "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}"
+            printf 'The shared action verified the uploaded Worker version at 100%% traffic. Google authorization, WebSub delivery and playlist writes require separate verification.\n'
+          } >> "${GITHUB_STEP_SUMMARY}"
