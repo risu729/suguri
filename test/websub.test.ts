@@ -57,6 +57,15 @@ describe("authenticated WebSub ingestion", () => {
     expect(
       await env.DB.prepare("SELECT id FROM videos WHERE user_id=?").bind(other).first(),
     ).toBeNull();
+    expect(
+      await env.DB.prepare("SELECT user_id,actor,video_id,action,detail FROM audit").first(),
+    ).toEqual({
+      user_id: user,
+      actor: "websub",
+      video_id: video,
+      action: "websub_received",
+      detail: "discovered",
+    });
   });
 
   it("does not reset a sticky manual decision or added membership on duplicate delivery", async () => {
@@ -72,6 +81,10 @@ describe("authenticated WebSub ingestion", () => {
         .bind(user)
         .first(),
     ).toMatchObject({ status: "excluded", manual_override: 1, version: 7 });
+    expect((await env.DB.prepare("SELECT detail FROM audit ORDER BY id").all()).results).toEqual([
+      { detail: "discovered" },
+      { detail: "updated" },
+    ]);
   });
 
   it("rejects missing/invalid HMAC and expired subscriptions", async () => {
@@ -84,6 +97,94 @@ describe("authenticated WebSub ingestion", () => {
     await env.DB.prepare("UPDATE channels SET lease_expires_at=0 WHERE user_id=?").bind(user).run();
     expect((await handleWebSub(await signed(feed()), env)).status).toBe(410);
     expect(await env.DB.prepare("SELECT id FROM videos").first()).toBeNull();
+    expect(await env.DB.prepare("SELECT id FROM audit").first()).toBeNull();
+  });
+
+  it("rolls back a receipt when its candidate cannot be stored and does not acknowledge", async () => {
+    await env.DB.prepare(
+      "CREATE TRIGGER fail_receipt BEFORE INSERT ON videos BEGIN SELECT RAISE(ABORT, 'synthetic candidate failure'); END",
+    ).run();
+    try {
+      expect((await handleWebSub(await signed(feed()), env)).status).toBe(503);
+      expect(await env.DB.prepare("SELECT id FROM videos").first()).toBeNull();
+      expect(await env.DB.prepare("SELECT id FROM audit").first()).toBeNull();
+    } finally {
+      await env.DB.prepare("DROP TRIGGER fail_receipt").run();
+    }
+  });
+
+  it("never relabels a backfilled candidate as notification discovery", async () => {
+    await env.DB.prepare(
+      "INSERT INTO videos(user_id,id,channel_id,discovered_at,updated_at) VALUES(?,?,?,?,?)",
+    )
+      .bind(user, video, channel, Date.now() - 60000, Date.now() - 60000)
+      .run();
+    expect((await handleWebSub(await signed(feed()), env)).status).toBe(204);
+    expect(
+      await env.DB.prepare("SELECT detail FROM audit WHERE video_id=?").bind(video).first(),
+    ).toEqual({ detail: "updated" });
+  });
+
+  it("advances a large renewal queue without exceeding the request or time bound", async () => {
+    await env.DB.batch(
+      Array.from({ length: 30 }, (_, index) =>
+        env.DB.prepare(
+          "INSERT INTO channels(user_id,id,callback_token,hub_secret) VALUES(?,?,?,?)",
+        ).bind(user, `UC${String(index).padStart(22, "0")}`, token, secret),
+      ),
+    );
+    const fast = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
+    await renewSubscriptions(env, user, fast);
+    expect(fast).toHaveBeenCalledTimes(25);
+    await env.DB.prepare("UPDATE channels SET pending_until=0,renew_after=0 WHERE user_id=?")
+      .bind(user)
+      .run();
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const slow = vi.fn<typeof fetch>(async () => {
+      now += 6000;
+      return new Response(null, { status: 202 });
+    });
+    try {
+      await renewSubscriptions(env, user, slow);
+      expect(slow).toHaveBeenCalledTimes(2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("counts slow intent persistence against the hub request timeout", async () => {
+    await env.DB.prepare("UPDATE channels SET renew_after=0 WHERE user_id=?").bind(user).run();
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const prepare = env.DB.prepare.bind(env.DB);
+    const delay = vi.spyOn(env.DB, "prepare").mockImplementation((sql) => {
+      const statement = prepare(sql);
+      if (!sql.includes("SET pending_mode=?")) return statement;
+      const bind = statement.bind.bind(statement);
+      vi.spyOn(statement, "bind").mockImplementation((...values) => {
+        const bound = bind(...values);
+        const run = bound.run.bind(bound);
+        vi.spyOn(bound, "run").mockImplementation(async () => {
+          const result = await run();
+          now += 14000;
+          return result;
+        });
+        return bound;
+      });
+      return statement;
+    });
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
+    try {
+      await renewSubscriptions(env, user, fetcher);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(timeout).toHaveBeenCalledWith(1000);
+    } finally {
+      timeout.mockRestore();
+      delay.mockRestore();
+      clock.mockRestore();
+    }
   });
 
   it("rejects DTD, wrong namespaces, mismatched topics/channels and oversized feeds", async () => {

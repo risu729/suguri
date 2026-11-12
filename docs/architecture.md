@@ -96,6 +96,24 @@ External removals are sticky and never classified as watched automatically.
 
 ## Quotas, retries, and orchestration choice
 
+Each bounded pass advances up to eight uploads pages and up to 25 hub requests. Hub
+renewal has a fifteen-second window; each request timeout is at most five seconds and is
+shortened if intent persistence consumes the remaining time. The existing per-pass
+YouTube request/deadline limits, pipeline lease and daily user/project quotas still
+apply. This avoids multi-day initial setup caused solely by tiny fixed batches on large
+subscription lists.
+
+Validated WebSub video IDs and redacted receipt rows are persisted in the same D1 batch
+before acknowledging delivery. Receipts contain only user/video identifiers, a fixed
+action/detail and time; never callback capabilities, signatures or feed bodies. The
+receipt distinguishes discovering a new candidate from updating an existing one using
+the same atomic batch, so later notifications cannot relabel backfill as discovery. The
+authenticated state/UI separates active hub subscriptions, channels with completed
+discovery, and recorded notifications. Receipt totals are distinct videos since receipt
+recording began; duplicate/update notifications do not prove a newly published video.
+The scoped recent receipt view exposes publication, first receipt and confirmed insert
+times so operators can distinguish real notification-to-save evidence from backfill.
+
 An atomic D1 batch reserves both the shared project allowance and the user's
 budget before each YouTube request. A rejected user reservation does not consume
 the project budget. The shared software ceiling is 9,500 units/day; a user's

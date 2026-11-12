@@ -158,50 +158,75 @@ export async function appState(
       .bind(...values, offset)
       .all<VideoRow>()
   ).results;
-  const [settings, categories, rules, connection, user, counts, quota, channels, timing, series] =
-    await Promise.all([
-      getSettings(db, uid),
-      getCategories(db, uid),
-      getRules(db, uid),
-      db
-        .prepare(
-          "SELECT channel_title,reconnect_required,(length(access_token)>0) AS has_token FROM connection WHERE user_id=?",
-        )
-        .bind(uid)
-        .first<{ channel_title: string; reconnect_required: number; has_token: number }>(),
-      db
-        .prepare("SELECT csrf_token FROM users WHERE id=?")
-        .bind(uid)
-        .first<{ csrf_token: string }>(),
-      db
-        .prepare("SELECT status,count(*) AS n FROM videos WHERE user_id=? GROUP BY status")
-        .bind(uid)
-        .all<{ status: string; n: number }>(),
-      db
-        .prepare("SELECT units,insertions FROM user_quota WHERE user_id=? AND day=?")
-        .bind(uid, quotaDay())
-        .first<{ units: number; insertions: number }>(),
-      db
-        .prepare(
-          "SELECT count(*) AS total,coalesce(sum(lease_expires_at>?),0) AS activeWebSub FROM channels WHERE user_id=? AND active=1",
-        )
-        .bind(Date.now(), uid)
-        .first<{ total: number; activeWebSub: number }>(),
-      db
-        .prepare("SELECT last_sync_at,last_run_at,last_error FROM settings WHERE user_id=?")
-        .bind(uid)
-        .first<{
-          last_sync_at: number | null;
-          last_run_at: number | null;
-          last_error: string | null;
-        }>(),
-      db
-        .prepare(
-          "SELECT id,name,playlist_id AS playlistId,category_id AS categoryId,mode,started_at AS startedAt FROM series WHERE user_id=? ORDER BY name",
-        )
-        .bind(uid)
-        .all<Series>(),
-    ]);
+  const [
+    settings,
+    categories,
+    rules,
+    connection,
+    user,
+    counts,
+    quota,
+    channels,
+    timing,
+    series,
+    notificationCount,
+    notifications,
+  ] = await Promise.all([
+    getSettings(db, uid),
+    getCategories(db, uid),
+    getRules(db, uid),
+    db
+      .prepare(
+        "SELECT channel_title,reconnect_required,(length(access_token)>0) AS has_token FROM connection WHERE user_id=?",
+      )
+      .bind(uid)
+      .first<{ channel_title: string; reconnect_required: number; has_token: number }>(),
+    db.prepare("SELECT csrf_token FROM users WHERE id=?").bind(uid).first<{ csrf_token: string }>(),
+    db
+      .prepare("SELECT status,count(*) AS n FROM videos WHERE user_id=? GROUP BY status")
+      .bind(uid)
+      .all<{ status: string; n: number }>(),
+    db
+      .prepare("SELECT units,insertions FROM user_quota WHERE user_id=? AND day=?")
+      .bind(uid, quotaDay())
+      .first<{ units: number; insertions: number }>(),
+    db
+      .prepare(
+        "SELECT count(*) AS total,coalesce(sum(lease_expires_at>?),0) AS activeWebSub,coalesce(sum(last_reconciled_at>0 AND reconcile_cursor IS NULL),0) AS backfillComplete,coalesce(sum(last_error IS NOT NULL),0) AS errors FROM channels WHERE user_id=? AND active=1",
+      )
+      .bind(Date.now(), uid)
+      .first<AppState["channels"]>(),
+    db
+      .prepare("SELECT last_sync_at,last_run_at,last_error FROM settings WHERE user_id=?")
+      .bind(uid)
+      .first<{
+        last_sync_at: number | null;
+        last_run_at: number | null;
+        last_error: string | null;
+      }>(),
+    db
+      .prepare(
+        "SELECT id,name,playlist_id AS playlistId,category_id AS categoryId,mode,started_at AS startedAt FROM series WHERE user_id=? ORDER BY name",
+      )
+      .bind(uid)
+      .all<Series>(),
+    db
+      .prepare(
+        "SELECT count(DISTINCT video_id) AS videos,max(created_at) AS lastReceivedAt FROM audit WHERE user_id=? AND action='websub_received' AND actor='websub'",
+      )
+      .bind(uid)
+      .first<{ videos: number; lastReceivedAt: number | null }>(),
+    db
+      .prepare(`SELECT a.video_id AS videoId,min(a.created_at) AS firstReceivedAt,max(a.created_at) AS lastReceivedAt,
+        min(CASE WHEN a.detail='discovered' THEN a.created_at END) AS discoveredFromNotificationAt,
+        v.published_at AS publishedAt,v.status,v.manual_override AS manualOverride,
+        (SELECT max(o.updated_at) FROM operations o WHERE o.user_id=a.user_id AND o.video_id=a.video_id AND o.kind='insert' AND o.state='done') AS addedAt
+        FROM audit a JOIN videos v ON v.user_id=a.user_id AND v.id=a.video_id
+        WHERE a.user_id=? AND a.action='websub_received' AND a.actor='websub'
+        GROUP BY a.video_id ORDER BY lastReceivedAt DESC,a.video_id LIMIT 20`)
+      .bind(uid)
+      .all<AppState["notifications"]["recent"][number]>(),
+  ]);
   return {
     authenticated: true,
     connected: !!connection?.has_token,
@@ -225,7 +250,12 @@ export async function appState(
     nextCursor: rows.length > 50 ? offset + 50 : null,
     counts: Object.fromEntries(counts.results.map((row) => [row.status, row.n])),
     quota: { day: quotaDay(), units: quota?.units ?? 0, insertions: quota?.insertions ?? 0 },
-    channels: channels ?? { total: 0, activeWebSub: 0 },
+    channels: channels ?? { total: 0, activeWebSub: 0, backfillComplete: 0, errors: 0 },
+    notifications: {
+      videos: notificationCount?.videos ?? 0,
+      lastReceivedAt: notificationCount?.lastReceivedAt ?? null,
+      recent: notifications.results,
+    },
     lastSyncAt: timing?.last_sync_at ?? null,
     lastRunAt: timing?.last_run_at ?? null,
     lastError: timing?.last_error ?? null,

@@ -289,7 +289,20 @@ export async function handleWebSub(request: Request, env: Env): Promise<Response
     validated = true;
     if (ids.length)
       await env.DB.batch(
-        ids.map((id) =>
+        ids.flatMap((id) => [
+          env.DB.prepare(`INSERT INTO audit(user_id,actor,video_id,action,detail,created_at)
+            SELECT ?,'websub',?,'websub_received',
+            CASE WHEN EXISTS(SELECT 1 FROM videos WHERE user_id=? AND id=?) THEN 'updated' ELSE 'discovered' END,?
+            WHERE EXISTS(SELECT 1 FROM channels WHERE user_id=? AND id=? AND active=1 AND lease_expires_at>?)`).bind(
+            userId,
+            id,
+            userId,
+            id,
+            now,
+            userId,
+            channelId,
+            now,
+          ),
           env.DB.prepare(`INSERT INTO videos(user_id,id,channel_id,discovered_at,updated_at)
       SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM channels WHERE user_id=? AND id=? AND active=1 AND lease_expires_at>?)
       ON CONFLICT(user_id,id) DO UPDATE SET metadata_dirty=1`).bind(
@@ -302,7 +315,7 @@ export async function handleWebSub(request: Request, env: Env): Promise<Response
             channelId,
             now,
           ),
-        ),
+        ]),
       );
     return new Response(null, { status: 204 });
   } catch (error) {
@@ -322,12 +335,14 @@ export async function renewSubscriptions(
   fetcher: Fetcher = fetch,
 ): Promise<void> {
   const now = Date.now();
+  const deadline = now + 15000;
   const rows =
     await env.DB.prepare(`SELECT * FROM channels WHERE user_id=? AND pending_until<=? AND renew_after<=?
-    AND (active=1 OR lease_expires_at>0) ORDER BY renew_after LIMIT 3`)
+    AND (active=1 OR lease_expires_at>0) ORDER BY renew_after LIMIT 25`)
       .bind(userId, now, now)
       .all<Channel>();
   for (const channel of rows.results) {
+    if (Date.now() + 5000 > deadline) break;
     if (!channelIdPattern.test(channel.id)) continue;
     const mode = channel.active ? "subscribe" : "unsubscribe";
     // oxlint-disable-next-line no-await-in-loop -- Persist intent before the hub may synchronously verify it.
@@ -348,13 +363,15 @@ export async function renewSubscriptions(
       "hub.lease_seconds": "864000",
       "hub.verify": "async",
     });
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
     try {
       // oxlint-disable-next-line no-await-in-loop -- Bound hub requests sequentially within the tick's lease.
       const response = await fetcher(hub, {
         method: "POST",
         redirect: "manual",
         body: form,
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(Math.min(5000, remaining)),
       });
       // oxlint-disable-next-line no-await-in-loop -- Discard response bodies without retaining private callback data.
       await response.body?.cancel();
