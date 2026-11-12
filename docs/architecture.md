@@ -73,6 +73,28 @@ including free opening broadcasts, while unfinished streams remain deferred.
 title or ID. It returns at most 50 IDs/titles per page, plus `nextCursor`; it never
 returns callback capabilities or hub secrets and does not call YouTube.
 
+`videos_batch` (`POST /api/videos/batch`) applies one action to 1-50 explicit
+ID/version pairs. A materialized selection in a single D1 update validates every
+version in the authenticated user's catalog before changing any row. A stale,
+missing, foreign or duplicate member rejects the whole selection. Assign/exclude
+remain sticky; reset releases the override. This never bypasses uncertain-write
+reconciliation or the separate explicit missing-insertion confirmation.
+
+`channels_retry` (`POST /api/channels/:id/retry`) resets discovery only for one
+failed, active, owned channel. Normal processing budgets still apply. The UI lists
+up to 25 failed channels with their next retry times; successful retries remove
+them from that list so further failures become visible.
+
+Rule and series edits queue `needs_classification` without erasing displayed
+decisions, manual overrides, failure allowances, or discovery checkpoints. The
+pipeline reuses clean metadata younger than seven days for completed videos;
+unfinished or unavailable videos still require a provider refresh. Reuse retains
+the original fetch timestamp. An unchanged saved destination clears the flag
+without an extra metadata read or membership write. Changed destinations retain
+the existing external-removal check and add-before-remove ordering. Increasing
+the historical window explicitly restarts bounded discovery; ordinary rule edits
+do not. Reclassification flags on terminal failures wait for explicit retry.
+
 `rules_preview` reads up to 200 recent candidates per page and returns `nextCursor` when
 more remain. Each match includes the candidate rule's decision and the effective
 decision after existing priorities, series holds/follows and sticky manual choices.

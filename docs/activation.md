@@ -10,7 +10,11 @@ bounded acceptance test are complete. The personal installation uses
 
 1. Choose an HTTPS application origin and the intended Cloudflare account.
 2. Create/bind the D1 database named `suguri-catalog`, and apply
-   `migrations/0001_catalog.sql` to that exact database. Inspect native cf's plan
+   the ordered SQL files in `migrations/` to that exact database. Existing
+   installations must apply `0002_reclassification.sql` before deploying code
+   that uses `needs_classification`. This additive column/index migration keeps
+   existing decisions and is compatible with the preceding Worker version.
+   Inspect native cf's plan
    and resource IDs before accepting provisioning. A build alone does not apply
    database migrations or prove a binding works.
 3. Configure the Worker custom domain, its five-minute Cron trigger, and the

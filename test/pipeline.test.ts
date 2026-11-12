@@ -11,6 +11,7 @@ import {
 import { quotaDay } from "../src/store.ts";
 import { resetDatabase, seedUser } from "./helpers.ts";
 import { YouTube, YouTubeError } from "../src/youtube.ts";
+import { execute } from "../src/service.ts";
 
 const user = "a".repeat(64);
 const otherUser = "b".repeat(64);
@@ -196,6 +197,144 @@ beforeEach(async () => {
   await resetDatabase();
   await seedConnection();
   await addCategory();
+});
+
+describe("cached reclassification", () => {
+  const principal = { userId: user, actor: "test", transport: "mcp" as const };
+  const cachedRule = {
+    id: "cached",
+    name: "Synthetic",
+    priority: 1,
+    enabled: true,
+    action: "categorize",
+    categoryId,
+    channelId: null,
+    titleIncludes: [],
+    titleExcludes: [],
+    descriptionIncludes: [],
+    minDurationSeconds: null,
+    maxDurationSeconds: null,
+    kind: "any",
+  };
+  it("preserves a saved decision and metadata age without another metadata read or insert", async () => {
+    await addVideo("added");
+    const fetchedAt = Date.now() - 3600000;
+    await env.DB.prepare(
+      "UPDATE videos SET metadata_fetched_at=?,next_attempt_at=? WHERE user_id=?",
+    )
+      .bind(fetchedAt, Date.now() + 6 * 3600000, user)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO playlist_entries(user_id,video_id,category_id,playlist_id,item_id) VALUES(?,?,?,?,?)",
+    )
+      .bind(user, video, categoryId, playlist, "existing")
+      .run();
+    const fake = provider();
+    fake.remote.set(playlist, [{ id: "existing", videoId: video }]);
+    await execute(env, principal, "rules_save", cachedRule);
+    await runPipeline(env, user, fake.fetcher);
+    expect(
+      await env.DB.prepare(
+        "SELECT status,needs_classification,metadata_fetched_at,reason FROM videos WHERE user_id=?",
+      )
+        .bind(user)
+        .first(),
+    ).toEqual({
+      status: "added",
+      needs_classification: 0,
+      metadata_fetched_at: fetchedAt,
+      reason: "rule:cached",
+    });
+    expect(
+      fake.fetcher.mock.calls.some(([input]) =>
+        new URL(String(input)).pathname.endsWith("/videos"),
+      ),
+    ).toBe(false);
+    expect(fake.events).toEqual([]);
+  });
+  it("reconsiders excluded cached videos and processes changed membership without resetting discovery", async () => {
+    await addVideo("excluded", 0, "rule:old", video, null);
+    const fetchedAt = Date.now() - 3600000;
+    await env.DB.prepare("UPDATE videos SET metadata_fetched_at=? WHERE user_id=?")
+      .bind(fetchedAt, user)
+      .run();
+    const fake = provider();
+    await execute(env, principal, "rules_save", cachedRule);
+    await runPipeline(env, user, fake.fetcher);
+    expect(
+      await env.DB.prepare(
+        "SELECT status,needs_classification,metadata_fetched_at FROM videos WHERE user_id=?",
+      )
+        .bind(user)
+        .first(),
+    ).toEqual({ status: "added", needs_classification: 0, metadata_fetched_at: fetchedAt });
+    expect(
+      fake.fetcher.mock.calls.some(([input]) =>
+        new URL(String(input)).pathname.endsWith("/videos"),
+      ),
+    ).toBe(false);
+    expect(fake.events).toEqual([`insert:${playlist}`]);
+    await execute(env, principal, "rules_save", {
+      ...cachedRule,
+      action: "exclude",
+      categoryId: null,
+    });
+    await runPipeline(env, user, fake.fetcher);
+    expect(
+      (await env.DB.prepare("SELECT status FROM videos WHERE user_id=?").bind(user).first())?.[
+        "status"
+      ],
+    ).toBe("excluded");
+    expect(fake.remote.get(playlist)).toEqual([]);
+  });
+  it("still refreshes unfinished broadcasts instead of trusting a cached upcoming state", async () => {
+    await addVideo("deferred");
+    await env.DB.prepare(
+      "UPDATE videos SET metadata_fetched_at=?,live_state='upcoming' WHERE user_id=?",
+    )
+      .bind(Date.now(), user)
+      .run();
+    await execute(env, principal, "rules_save", cachedRule);
+    const fake = provider();
+    await runPipeline(env, user, fake.fetcher);
+    expect(
+      fake.fetcher.mock.calls.some(([input]) =>
+        new URL(String(input)).pathname.endsWith("/videos"),
+      ),
+    ).toBe(true);
+    expect(
+      (await env.DB.prepare("SELECT status FROM videos WHERE user_id=?").bind(user).first())?.[
+        "status"
+      ],
+    ).toBe("added");
+  });
+  it("never restores an externally removed video while reclassifying its destination", async () => {
+    await addVideo("added");
+    await env.DB.prepare("UPDATE videos SET metadata_fetched_at=? WHERE user_id=?")
+      .bind(Date.now(), user)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO playlist_entries(user_id,video_id,category_id,playlist_id,item_id) VALUES(?,?,?,?,?)",
+    )
+      .bind(user, video, categoryId, playlist, "removed-item")
+      .run();
+    await execute(env, principal, "rules_save", {
+      ...cachedRule,
+      action: "review",
+      categoryId: null,
+    });
+    const fake = provider();
+    await runPipeline(env, user, fake.fetcher);
+    await runPipeline(env, user, fake.fetcher);
+    expect(
+      await env.DB.prepare(
+        "SELECT status,manual_override,needs_classification FROM videos WHERE user_id=?",
+      )
+        .bind(user)
+        .first(),
+    ).toEqual({ status: "removed", manual_override: 1, needs_classification: 0 });
+    expect(fake.events).toEqual([]);
+  });
 });
 
 describe("durable per-user processing", () => {

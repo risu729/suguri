@@ -11,6 +11,7 @@ const client = String.raw`
   const $ = (id) => document.getElementById(id);
   const statusNames = {pending:'情報を確認中',review:'要確認',queued:'反映待ち',added:'追加済み',excluded:'対象外',deferred:'配信終了待ち',error:'対応が必要',unavailable:'取得できません',removed:'削除済み'};
   let state = null;
+  const selectedVideos = new Map();
   let editingId = '';
   let draftRuleId = crypto.randomUUID();
   let ruleTemplates = [];
@@ -118,7 +119,10 @@ const client = String.raw`
     return state.categories.find(category => category.id === id)?.name || '保存先未設定';
   }
   function reasonText(video) {
+    if (video.reason === 'removed_externally') return 'YouTube上で取り除かれた動画です。自動では再追加しません。';
     if (video.manualOverride) return '手動で指定した内容を優先しています。';
+    if (video.reason === 'outside_backfill_window') return '過去の動画を確認する範囲より前の動画です。手動で保存先を指定できます。';
+    if (video.reason === 'series_follow') return 'フォロー中のシリーズとして分類しました。';
     if (video.reason === 'series_hold') return '保留中のシリーズの動画です。自動では追加しません。';
     if (video.status === 'deferred') return '配信の終了後に、もう一度確認します。';
     if (video.reason === 'unmatched') return '一致するルールがありません。保存先を選んでください。';
@@ -143,8 +147,26 @@ const client = String.raw`
     const messages = {assign:'保存先を指定しました。プレイリストへの変更を順次反映します。',exclude:'対象外にしました。追加済みの動画は保存先から取り除きます。',reset:'手動指定を解除し、ルールで見直します。',retry:'再試行を受け付けました。'};
     return mutate('/api/videos/'+encodeURIComponent(video.id),{action,version:video.version,...(categoryId ? {categoryId} : {})},messages[action]);
   }
+  function processingError(code) {
+    if (code.includes('quota')) return '本日の利用上限に達したため、次の利用枠を待っています。';
+    const messages = {video_unavailable:'動画が削除されたか、現在はアクセスできません。',category_playlist_unconfigured:'保存先のプレイリストを設定してください。',playlist_insert_uncertain:'追加結果を確認中です。重複を防ぐため、通常の再試行では追加をやり直しません。',reconnect_required:'Googleとの再接続が必要です。',youtube_http_404:'YouTubeから対象を取得できませんでした。時間を置いて再確認します。',pipeline_lease_lost:'ほかの処理へ引き継ぐため待機しています。'};
+    return messages[code] || '処理を完了できませんでした。接続や保存先を確認して再試行してください。';
+  }
+  function renderSelection() {
+    $('selection-count').textContent = selectedVideos.size+'件選択中（最大50件）';
+    $('selection-actions').hidden = selectedVideos.size === 0;
+  }
+  async function batchAction(action) {
+    if (!selectedVideos.size || busy) return;
+    const categoryId = $('batch-category').value;
+    if (action === 'assign' && !categoryId) {announce('保存先を選んでください。',true);return;}
+    if (action === 'exclude' && !window.confirm(selectedVideos.size+'件を対象外にします。保存済みの動画は管理しているプレイリストから取り除きます。')) return;
+    const ok = await mutate('/api/videos/batch',{action,items:[...selectedVideos.values()],...(action === 'assign' ? {categoryId} : {})},'選択した動画への指定を受け付けました。変更を順次反映します。');
+    if (ok) {selectedVideos.clear();renderVideos();}
+  }
   function renderVideos() {
     const list = $('video-list'); list.replaceChildren();
+    renderSelection();
     $('inbox-count').textContent = state.counts.review ? state.counts.review+'件の動画を確認できます' : '気になる動画を、いつもの保存先へ。';
     if (!state.videos.length) {
       const empty = el('div','empty');
@@ -154,10 +176,20 @@ const client = String.raw`
     state.videos.forEach(video => {
       const card = el('article','video-card');
       const content = el('div','');
+      const selection = el('label','checkbox');
+      const checkbox = el('input',''); checkbox.type = 'checkbox'; checkbox.checked = selectedVideos.has(video.id);
+      checkbox.setAttribute('aria-label','「'+(video.title || video.id)+'」を選択');
+      checkbox.addEventListener('change',() => {
+        if (checkbox.checked && selectedVideos.size >= 50) {checkbox.checked = false;announce('一度に選べる動画は50件までです。',true);return;}
+        if (checkbox.checked) selectedVideos.set(video.id,{id:video.id,version:video.version}); else selectedVideos.delete(video.id);
+        renderSelection();
+      });
+      selection.append(checkbox,el('span','','選択')); content.append(selection);
       const badges = el('div','badges');
       badges.append(el('span','badge'+(video.status === 'error' || video.status === 'unavailable' ? ' error' : video.status === 'deferred' ? ' deferred' : ''),statusNames[video.status] || '確認中'));
       if (video.categoryId) badges.append(el('span','badge',categoryName(video.categoryId)));
       if (video.manualOverride) badges.append(el('span','badge manual','手動指定'));
+      if (video.needsClassification) badges.append(el('span','badge deferred','ルール再判定待ち'));
       content.append(badges);
       const heading = el('h2','');
       if (/^[A-Za-z0-9_-]{11}$/.test(video.id)) {
@@ -184,7 +216,10 @@ const client = String.raw`
         details.append(el('summary','','説明を読む'),description); content.append(details);
       }
       const reason = reasonText(video); if (reason) content.append(el('p','help',reason));
-      if (video.lastError) content.append(el('p','help', '処理が止まっています。接続や保存先を確認して再試行してください。'));
+      if (video.lastError) {
+        content.append(el('p','help',processingError(video.lastError)));
+        const errorDetails = el('details',''); errorDetails.append(el('summary','','エラーの詳細'),el('code','',video.lastError)); content.append(errorDetails);
+      }
       const controls = el('div','video-actions');
       const assign = el('div','row'); const field = el('div','field');
       const select = el('select',''); select.setAttribute('aria-label','「'+(video.title || '動画')+'」の保存先');
@@ -437,9 +472,16 @@ const client = String.raw`
     $('sync-status').textContent = '最終同期 '+dateText(state.lastSyncAt)+' · 最終整理 '+dateText(state.lastRunAt);
     $('websub-status').textContent = '新着通知の設定: '+state.channels.activeWebSub+' / '+state.channels.total+'チャンネル · 過去の動画の確認: '+state.channels.backfillComplete+' / '+state.channels.total+'チャンネル'+(state.channels.backfillFailed ? ' · 再確認待ち: '+state.channels.backfillFailed+'チャンネル（YouTubeから取得できなかったため、時間を置いて再試行します）' : '');
     $('notification-status').textContent = '通知で受け取った動画: '+state.notifications.videos+'件 · 最終受信 '+dateText(state.notifications.lastReceivedAt);
+    const failures = $('collection-errors'); failures.replaceChildren();
+    (state.collectionErrors || []).forEach(error => {
+      const item = el('div','panel');
+      item.append(el('h3','',error.title || error.channelId),el('p','help',processingError(error.code)),el('p','help','次の確認 '+dateText(error.nextAttemptAt)));
+      item.append(button('このチャンネルを再確認',() => mutate('/api/channels/'+encodeURIComponent(error.channelId)+'/retry',{},'再確認を受け付けました。通常の利用上限内で順次処理します。')));
+      failures.append(item);
+    });
     $('connection-warning').hidden = !state.reconnectRequired;
     $('processing-warning').hidden = !state.lastError;
-    categoryOptions($('category-filter'),true); categoryOptions($('rule-category')); categoryOptions($('series-category'),true,'保存先を指定しない');
+    categoryOptions($('category-filter'),true); categoryOptions($('rule-category')); categoryOptions($('series-category'),true,'保存先を指定しない'); categoryOptions($('batch-category'),true,'保存先を選択');
     renderVideos(); renderCategories(); renderRules(); renderSeries(); showSection(activeSection,false);
   }
   async function loadState(append = false) {
@@ -463,6 +505,7 @@ const client = String.raw`
         const merged = new Map(state.videos.map(video => [video.id,video]));
         next.videos.forEach(video => merged.set(video.id,video)); next.videos = [...merged.values()];
       }
+      if (!append) selectedVideos.clear();
       state = next; renderState();
     } catch {
       if (current !== requestNumber) return;
@@ -472,6 +515,12 @@ const client = String.raw`
   }
   document.querySelectorAll('[data-nav]').forEach(item => item.addEventListener('click',() => {if (state) showSection(item.dataset.nav);}));
   $('refresh').addEventListener('click',() => {void loadState();});
+  $('select-visible').addEventListener('click',() => {selectedVideos.clear();state.videos.slice(0,50).forEach(video => selectedVideos.set(video.id,{id:video.id,version:video.version}));renderVideos();});
+  $('clear-selection').addEventListener('click',() => {selectedVideos.clear();renderVideos();});
+  $('batch-assign').addEventListener('click',() => {void batchAction('assign');});
+  $('batch-exclude').addEventListener('click',() => {void batchAction('exclude');});
+  $('batch-reset').addEventListener('click',() => {void batchAction('reset');});
+  $('batch-retry').addEventListener('click',() => {void batchAction('retry');});
   $('status-filter').addEventListener('change',() => {void loadState();});
   $('category-filter').addEventListener('change',() => {void loadState();});
   $('search-form').addEventListener('submit',event => {event.preventDefault();void loadState();});
@@ -575,7 +624,7 @@ export function renderApp(nonce = ""): string {
 <section data-section="inbox"><div class="section-heading"><div><h1 tabindex="-1">受信箱</h1><p id="inbox-count">気になる動画を、いつもの保存先へ。</p></div><button id="process" type="button">今すぐ整理</button></div>
 <form id="manual-form" class="panel inline-form"><div class="field"><label for="video-url">動画を追加</label><input id="video-url" type="url" required autocomplete="off" placeholder="YouTubeの動画・ShortsのURL"><p class="help">登録外のチャンネルの動画も追加できます。</p></div><button class="primary" type="submit">受信箱に追加</button></form>
 <form id="search-form" class="filters" role="search"><div class="field"><label for="status-filter">状態</label><select id="status-filter"><option value="review">要確認</option><option value="all">すべて</option><option value="pending">情報を確認中</option><option value="queued">反映待ち</option><option value="added">追加済み</option><option value="deferred">配信終了待ち</option><option value="excluded">対象外</option><option value="error">対応が必要</option><option value="unavailable">取得できません</option><option value="removed">削除済み</option></select></div><div class="field"><label for="category-filter">保存先</label><select id="category-filter"></select></div><div class="field"><label for="search">動画を探す</label><div class="row"><input id="search" class="search-input" type="search" placeholder="タイトル・チャンネル"><button type="submit">検索</button></div></div></form>
-<div id="video-list" class="video-list"></div><button id="load-more" class="load-more" type="button" hidden>続きを表示</button><p class="footer-note">手動の分類・対象外の指定を優先します。「ルールに戻す」で解除できます。保存先を移動すると、以前の保存先からは取り除きます。</p></section>
+<div class="panel"><div class="actions"><button id="select-visible" type="button">表示中の先頭50件を選択</button><button id="clear-selection" type="button">選択を解除</button><span id="selection-count" aria-live="polite"></span></div><div id="selection-actions" class="actions" hidden><div class="field"><label for="batch-category">選択した動画の保存先</label><select id="batch-category"></select></div><button id="batch-assign" type="button">まとめて分類</button><button id="batch-exclude" type="button">まとめて対象外</button><button id="batch-reset" type="button">まとめてルールに戻す</button><button id="batch-retry" type="button">まとめて再試行</button></div></div><div id="video-list" class="video-list"></div><button id="load-more" class="load-more" type="button" hidden>続きを表示</button><p class="footer-note">手動の分類・対象外の指定を優先します。「ルールに戻す」で解除できます。保存先を移動すると、以前の保存先からは取り除きます。</p></section>
 <section data-section="categories" hidden><div class="section-heading"><div><h1 tabindex="-1">保存先</h1><p>用途ごとの非公開プレイリストを、自分のYouTubeに。</p></div></div>
 <form id="category-form" class="panel inline-form"><div class="field"><label for="category-name">保存先の名前</label><input id="category-name" required maxlength="120" placeholder="用途がわかる名前"></div><button class="primary" type="submit">保存先を作る</button></form>
 <div id="category-list" class="category-grid"></div><p class="footer-note">公開・限定公開や、ほかの人のプレイリストには書き込みません。</p></section>
@@ -600,6 +649,6 @@ export function renderApp(nonce = ""): string {
 <div class="field"><label for="daily-limit">1日に追加する動画の上限</label><input id="daily-limit" type="number" min="1" max="150" step="1" required></div><div class="field"><label for="daily-budget">1日のAPI利用上限（ユニット）</label><input id="daily-budget" type="number" min="100" max="9500" step="1" required><p class="help">YouTube APIの利用枠です。動画の追加・情報取得の両方で使います。</p></div>
 <div class="field"><label for="backfill-days">過去の動画を確認する範囲</label><select id="backfill-days"><option value="7">過去7日間</option><option value="30">過去30日間</option></select><p class="help">登録チャンネルの同期や、ルール変更時の見直しに使います。保存済みの手動指定は保持します。</p></div></div><div class="actions settings-actions"><button class="primary" type="submit">設定を保存</button></div></form>
 <div class="panel"><h2>本日の利用量</h2><div class="stats"><div><p class="muted">APIユニット</p><p id="quota-units" class="stat-value">0</p></div><div><p class="muted">動画の追加</p><p id="quota-insertions" class="stat-value">0</p></div><div><p class="muted">登録チャンネル</p><p id="channel-total" class="stat-value">0</p></div></div><progress id="quota-progress" class="progress" aria-label="1日のAPI利用上限に対する使用量" max="1" value="0"></progress><p class="help">YouTubeの利用量は米国太平洋時間の日付で集計します。</p></div>
-<div class="panel setting-row"><div><h2>登録チャンネル</h2><p id="sync-status" class="muted"></p><p id="websub-status" class="muted"></p><p id="notification-status" class="muted"></p><p class="help">新着動画を順次受け取り、通知が届かなかった動画も定期的に確認します。通知の件数は受信記録を開始してからの集計です。</p></div><button id="sync" type="button">登録チャンネルを同期</button></div></section>
+<div id="collection-errors" aria-live="polite"></div><div class="panel setting-row"><div><h2>登録チャンネル</h2><p id="sync-status" class="muted"></p><p id="websub-status" class="muted"></p><p id="notification-status" class="muted"></p><p class="help">新着動画を順次受け取り、通知が届かなかった動画も定期的に確認します。通知の件数は受信記録を開始してからの集計です。</p></div><button id="sync" type="button">登録チャンネルを同期</button></div></section>
 </div></main></div><script nonce="${safeNonce}">${client}</script></body></html>`;
 }

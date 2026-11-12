@@ -1,5 +1,6 @@
 import { HttpError, randomToken } from "./util.ts";
 import type { Category, CategoryId, Decision, VideoRow } from "./model.ts";
+import { metadataFromRow } from "./model.ts";
 import { classifySelection } from "./rules.ts";
 import {
   acquireLease,
@@ -770,7 +771,7 @@ async function reconcileDeletes(
 async function detectRemoved(env: Env, userId: string, api: YouTube): Promise<void> {
   const rows =
     await env.DB.prepare(`SELECT e.* FROM playlist_entries e JOIN videos v ON v.user_id=e.user_id AND v.id=e.video_id
-    WHERE e.user_id=? AND v.status='added' AND v.next_attempt_at<=? AND NOT EXISTS(
+    WHERE e.user_id=? AND v.status='added' AND v.needs_classification=0 AND v.next_attempt_at<=? AND NOT EXISTS(
       SELECT 1 FROM operations o WHERE o.user_id=e.user_id AND o.video_id=e.video_id AND o.category_id=e.category_id
       AND o.kind='delete' AND o.state<>'done' AND o.item_id=e.item_id) ORDER BY v.next_attempt_at LIMIT 2`)
       .bind(userId, Date.now())
@@ -783,7 +784,7 @@ async function detectRemoved(env: Env, userId: string, api: YouTube): Promise<vo
       // oxlint-disable-next-line no-await-in-loop -- External removals become sticky manual decisions.
       await env.DB.batch([
         env.DB.prepare(
-          "UPDATE videos SET status='removed',manual_override=1,reason='removed_externally',last_error=NULL,updated_at=?,version=version+1 WHERE user_id=? AND id=? AND status<>'excluded'",
+          "UPDATE videos SET needs_classification=0,status='removed',manual_override=1,reason='removed_externally',last_error=NULL,updated_at=?,version=version+1 WHERE user_id=? AND id=? AND status<>'excluded'",
         ).bind(Date.now(), userId, entry.video_id),
         env.DB.prepare(
           "DELETE FROM playlist_entries WHERE user_id=? AND video_id=? AND category_id=? AND item_id=?",
@@ -809,6 +810,38 @@ async function processVideo(
   owner: string,
 ): Promise<void> {
   if (row.manual_override && row.reason === "manual:exclude") row = { ...row, status: "excluded" };
+  const cached =
+    row.metadata_fetched_at > Date.now() - 7 * day &&
+    !row.metadata_dirty &&
+    row.duration_seconds !== null &&
+    row.live_state === "none" &&
+    row.status !== "unavailable";
+  // An unchanged saved decision needs no provider calls. Keep the original fetch timestamp.
+  if (
+    row.needs_classification &&
+    !row.manual_override &&
+    cached &&
+    row.status === "added" &&
+    !row.last_error
+  ) {
+    const settings = await getSettings(env.DB, userId);
+    const decision =
+      Date.parse(row.published_at) < Date.now() - settings.backfillDays * day
+        ? { status: "review", categoryId: null, reason: "outside_backfill_window" }
+        : classifySelection(
+            metadataFromRow(row),
+            await getRules(env.DB, userId),
+            await seriesSelection(env, userId, row.id),
+          );
+    if (decision.status === "queued" && decision.categoryId === row.category_id) {
+      await env.DB.prepare(
+        "UPDATE videos SET needs_classification=0,reason=?,updated_at=?,version=version+1 WHERE user_id=? AND id=? AND version=?",
+      )
+        .bind(decision.reason, Date.now(), userId, row.id, row.version)
+        .run();
+      return;
+    }
+  }
   if (!row.manual_override && row.status !== "excluded") {
     const tracked = await env.DB.prepare(
       `SELECT e.* FROM playlist_entries e WHERE e.user_id=? AND e.video_id=? AND NOT EXISTS(
@@ -824,7 +857,7 @@ async function processVideo(
         // oxlint-disable-next-line no-await-in-loop -- A remote removal is sticky before any new destination is considered.
         await env.DB.batch([
           env.DB.prepare(
-            "UPDATE videos SET status='removed',manual_override=1,reason='removed_externally',updated_at=?,version=version+1 WHERE user_id=? AND id=? AND version=?",
+            "UPDATE videos SET needs_classification=0,status='removed',manual_override=1,reason='removed_externally',updated_at=?,version=version+1 WHERE user_id=? AND id=? AND version=?",
           ).bind(Date.now(), userId, row.id, row.version),
           env.DB.prepare(
             "DELETE FROM playlist_entries WHERE user_id=? AND video_id=? AND category_id=? AND item_id=?",
@@ -838,17 +871,18 @@ async function processVideo(
     }
   }
   if (
-    row.status !== "excluded" &&
+    (row.status !== "excluded" || row.needs_classification) &&
     (row.status === "pending" ||
+      row.needs_classification ||
       row.status === "deferred" ||
       row.status === "error" ||
       row.status === "unavailable" ||
       row.duration_seconds === null)
   ) {
-    const metadata = await api.video(row.id);
+    const metadata = cached ? metadataFromRow(row) : await api.video(row.id);
     if (!metadata) {
       await env.DB.prepare(
-        "UPDATE videos SET status='unavailable',last_error='video_unavailable',channel_title='',title='',description='',thumbnail_url='',duration_seconds=NULL,metadata_fetched_at=?,metadata_dirty=0,next_attempt_at=?,updated_at=?,version=version+1 WHERE user_id=? AND id=? AND version=?",
+        "UPDATE videos SET needs_classification=0,status='unavailable',last_error='video_unavailable',channel_title='',title='',description='',thumbnail_url='',duration_seconds=NULL,metadata_fetched_at=?,metadata_dirty=0,next_attempt_at=?,updated_at=?,version=version+1 WHERE user_id=? AND id=? AND version=?",
       )
         .bind(Date.now(), Date.now() + day, Date.now(), userId, row.id, row.version)
         .run();
@@ -880,7 +914,7 @@ async function processVideo(
     const now = Date.now();
     const updated =
       await env.DB.prepare(`UPDATE videos SET channel_id=?,channel_title=?,title=?,description=?,published_at=?,duration_seconds=?,
-      live_state=?,ended_at=?,thumbnail_url=?,metadata_fetched_at=?,metadata_dirty=0,status=?,category_id=?,reason=?,last_error=NULL,next_attempt_at=?,updated_at=?,version=version+1
+      live_state=?,ended_at=?,thumbnail_url=?,metadata_fetched_at=?,metadata_dirty=0,needs_classification=0,status=?,category_id=?,reason=?,last_error=NULL,next_attempt_at=?,updated_at=?,version=version+1
       WHERE user_id=? AND id=? AND version=?`)
         .bind(
           metadata.channelId,
@@ -892,7 +926,7 @@ async function processVideo(
           metadata.liveState,
           metadata.endedAt,
           metadata.thumbnailUrl,
-          now,
+          cached ? row.metadata_fetched_at : now,
           decision.status,
           decision.categoryId,
           decision.reason,
@@ -967,7 +1001,7 @@ export async function runPipeline(
     if (Date.now() + 20000 < deadline) await renewSubscriptions(env, userId, fetcher);
     const rows =
       await env.DB.prepare(`SELECT * FROM videos v WHERE user_id=? AND next_attempt_at<=? AND attempts<6
-      AND (status IN ('pending','deferred','error','queued','unavailable') OR (status='excluded' AND EXISTS(
+      AND ((needs_classification=1 AND manual_override=0) OR status IN ('pending','deferred','error','queued','unavailable') OR (status='excluded' AND EXISTS(
         SELECT 1 FROM playlist_entries e WHERE e.user_id=v.user_id AND e.video_id=v.id)))
       ORDER BY manual_override DESC,discovered_at,id LIMIT 8`)
         .bind(userId, Date.now())
