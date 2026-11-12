@@ -1,6 +1,6 @@
 import { HttpError, randomToken } from "./util.ts";
 import type { Category, CategoryId, Decision, VideoRow } from "./model.ts";
-import { classify } from "./rules.ts";
+import { classifySelection } from "./rules.ts";
 import {
   acquireLease,
   releaseLease,
@@ -502,18 +502,21 @@ async function pollSeries(env: Env, userId: string, api: YouTube): Promise<void>
   }
 }
 
-async function seriesDecision(env: Env, userId: string, id: string): Promise<Decision | null> {
+async function seriesSelection(
+  env: Env,
+  userId: string,
+  id: string,
+): Promise<{ hold: boolean; categoryId: string | null }> {
   const memberships =
     await env.DB.prepare(`SELECT s.mode,s.category_id FROM series s JOIN series_videos v
     ON s.user_id=v.user_id AND s.id=v.series_id WHERE s.user_id=? AND v.video_id=? ORDER BY s.id`)
       .bind(userId, id)
       .all<{ mode: "hold" | "follow"; category_id: string | null }>();
-  if (memberships.results.some((row) => row.mode === "hold"))
-    return { status: "review", categoryId: null, reason: "series_hold" };
   const follow = memberships.results.find((row) => row.mode === "follow" && row.category_id);
-  return follow
-    ? { status: "queued", categoryId: follow.category_id, reason: "series_follow" }
-    : null;
+  return {
+    hold: memberships.results.some((row) => row.mode === "hold"),
+    categoryId: follow?.category_id ?? null,
+  };
 }
 
 async function recordEntry(env: Env, op: Operation, itemId: string): Promise<void> {
@@ -862,9 +865,11 @@ async function processVideo(
     } else if (Date.parse(metadata.publishedAt) < Date.now() - settings.backfillDays * day) {
       decision = { status: "review", categoryId: null, reason: "outside_backfill_window" };
     } else
-      decision =
-        (await seriesDecision(env, userId, row.id)) ??
-        classify(metadata, await getRules(env.DB, userId));
+      decision = classifySelection(
+        metadata,
+        await getRules(env.DB, userId),
+        await seriesSelection(env, userId, row.id),
+      );
     if (metadata.liveState !== "none" && !metadata.endedAt && decision.status !== "excluded") {
       decision = {
         status: "deferred",

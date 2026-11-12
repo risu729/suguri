@@ -8,7 +8,7 @@ function includesAny(content: string, candidates: string[]): boolean {
   return candidates.some((keyword) => content.includes(normalize(keyword)));
 }
 
-function matches(video: VideoMetadata, rule: Rule): boolean {
+export function matchesRule(video: VideoMetadata, rule: Rule): boolean {
   const title = normalize(video.title);
   const description = normalize(video.description);
   const archive = video.endedAt !== null;
@@ -39,7 +39,7 @@ export function classify(video: VideoMetadata, rules: Rule[]): Decision {
             : 0,
     );
   for (const rule of ordered) {
-    if (!matches(video, rule)) continue;
+    if (!matchesRule(video, rule)) continue;
     return {
       status:
         rule.action === "categorize" ? "queued" : rule.action === "exclude" ? "excluded" : "review",
@@ -48,6 +48,19 @@ export function classify(video: VideoMetadata, rules: Rule[]): Decision {
     };
   }
   return { status: "review", categoryId: null, reason: "unmatched" };
+}
+
+export function classifySelection(
+  video: VideoMetadata,
+  rules: Rule[],
+  series: { hold: boolean; categoryId: string | null },
+): Decision {
+  if (video.liveState !== "none" && video.endedAt === null)
+    return { status: "deferred", categoryId: null, reason: "awaiting_end" };
+  if (series.hold) return { status: "review", categoryId: null, reason: "series_hold" };
+  if (series.categoryId)
+    return { status: "queued", categoryId: series.categoryId, reason: "series_follow" };
+  return classify(video, rules);
 }
 
 function text(value: unknown, label: string, maximum: number): string {

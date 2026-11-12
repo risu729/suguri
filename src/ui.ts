@@ -12,6 +12,16 @@ const client = String.raw`
   const statusNames = {pending:'情報を確認中',review:'要確認',queued:'反映待ち',added:'追加済み',excluded:'対象外',deferred:'配信終了待ち',error:'対応が必要',unavailable:'取得できません',removed:'削除済み'};
   let state = null;
   let editingId = '';
+  let draftRuleId = crypto.randomUUID();
+  let ruleTemplates = [];
+  let channelCursor = null;
+  let channelRequestNumber = 0;
+  let channelQuery = '';
+  let previewCursor = null;
+  let previewSnapshot = '';
+  let previewSampled = 0;
+  let previewMatched = 0;
+  let previewGeneration = 0;
   let editingSeriesId = '';
   let requestNumber = 0;
   let busy = 0;
@@ -261,6 +271,7 @@ const client = String.raw`
     });
   }
   function editRule(rule) {
+    $('rule-channel').required = false; $('rule-template-help').textContent = '';
     editingId = rule.id; $('rule-heading').textContent = 'ルールを編集';
     $('rule-name').value = rule.name; $('rule-priority').value = rule.priority;
     $('rule-enabled').checked = rule.enabled; $('rule-action').value = rule.action;
@@ -270,11 +281,63 @@ const client = String.raw`
     $('rule-min').value = rule.minDurationSeconds === null ? '' : rule.minDurationSeconds;
     $('rule-max').value = rule.maxDurationSeconds === null ? '' : rule.maxDurationSeconds;
     $('rule-kind').value = rule.kind; $('rule-category').disabled = rule.action !== 'categorize';
-    $('preview-results').replaceChildren(); $('rule-name').focus();
+    clearRulePreview(); $('rule-name').focus();
+  }
+  function clearRulePreview() {
+    previewGeneration++;
+    previewCursor = null; previewSnapshot = ''; previewSampled = 0; previewMatched = 0;
+    $('preview-results').replaceChildren(); $('preview-more').hidden = true;
   }
   function resetRule() {
+    draftRuleId = crypto.randomUUID(); $('rule-channel').required = false; $('rule-template-help').textContent = '';
     editingId = ''; $('rule-form').reset(); $('rule-heading').textContent = 'ルールを追加';
-    $('rule-category').disabled = false; $('preview-results').replaceChildren();
+    $('rule-category').disabled = false; clearRulePreview();
+  }
+  async function loadRuleTemplates() {
+    try {
+      const response = await fetch('/api/rules/templates',{credentials:'same-origin',cache:'no-store'});
+      if (!response.ok) throw new Error('templates_unavailable');
+      ruleTemplates = (await response.json()).templates;
+      ruleTemplates.forEach(template => {
+        const option = el('option','',template.name); option.value = template.id; $('rule-template').append(option);
+      });
+      $('rule-template').disabled = false;
+    } catch { $('rule-template-help').textContent = 'ひな形を読み込めませんでした。ページを更新するか、下の欄から条件を入力してください。'; }
+  }
+  function applyRuleTemplate() {
+    const template = ruleTemplates.find(item => item.id === $('rule-template').value);
+    if (!template) return;
+    const categoryId = $('rule-category').value || null;
+    const channelId = $('rule-channel').value.trim() || null;
+    resetRule();
+    editRule({...template.rule,id:'',categoryId,channelId});
+    $('rule-heading').textContent = 'ルールを追加';
+    $('rule-template').value = template.id;
+    $('rule-channel').required = template.requiresChannel;
+    $('rule-template-help').textContent = template.description+(template.requiresChannel ? ' 対象チャンネルを必ず選択してください。' : '')+' 条件と保存先を確認してから保存します。';
+    void searchRuleChannels(false);
+  }
+  async function searchRuleChannels(append = false) {
+    const query = $('rule-channel-search').value.trim();
+    if (append && query !== channelQuery) append = false;
+    const number = ++channelRequestNumber;
+    const params = new URLSearchParams(); if (query) params.set('q',query);
+    if (append && channelCursor !== null) params.set('cursor',String(channelCursor));
+    $('rule-channel-search-button').disabled = true;
+    try {
+      const response = await fetch('/api/channels?'+params,{credentials:'same-origin',cache:'no-store'});
+      if (!response.ok) throw new Error('channels_unavailable');
+      const result = await response.json(); if (number !== channelRequestNumber) return;
+      const select = $('rule-channel-options');
+      if (!append) { select.replaceChildren(el('option','','チャンネルを選択')); select.firstElementChild.value = ''; }
+      result.channels.forEach(channel => {
+        const option = el('option','',channel.title || channel.id); option.value = channel.id; select.append(option);
+      });
+      channelQuery = query; channelCursor = result.nextCursor;
+      $('rule-channel-more').hidden = channelCursor === null;
+      $('rule-channel-search-status').textContent = select.options.length > 1 ? (select.options.length-1)+'件を表示しています。' : '一致する登録チャンネルはありません。';
+    } catch { if (number === channelRequestNumber) $('rule-channel-search-status').textContent = 'チャンネルを読み込めませんでした。再検索してください。'; }
+    finally { if (number === channelRequestNumber) $('rule-channel-search-button').disabled = false; }
   }
   function playlistValue(value) {
     const trimmed = value.trim();
@@ -294,6 +357,11 @@ const client = String.raw`
       link.href = 'https://www.youtube.com/playlist?list='+encodeURIComponent(series.playlistId);
       link.target = '_blank'; link.rel = 'noopener noreferrer'; content.append(link);
       const actions = el('div','actions');
+      if (series.mode === 'follow' || series.categoryId) actions.append(button(series.mode === 'hold' ? '追いついたのでフォロー' : 'いったん保留',async () => {
+        const mode = series.mode === 'hold' ? 'follow' : 'hold';
+        if (mode === 'follow' && !window.confirm('フォローに切り替えますか？ 過去'+state.settings.backfillDays+'日以内の未処理動画も保存対象になります。')) return;
+        await mutate('/api/series',{id:series.id,name:series.name,playlistId:series.playlistId,categoryId:series.categoryId,mode},mode === 'follow' ? 'シリーズのフォローを開始しました。' : 'シリーズを保留しました。');
+      }));
       actions.append(button('編集',() => {
         editingSeriesId = series.id; $('series-name').value = series.name; $('series-playlist').value = series.playlistId; $('series-playlist').readOnly = true;
         $('series-mode').value = series.mode; $('series-category').value = series.categoryId || ''; $('series-name').focus();
@@ -312,20 +380,34 @@ const client = String.raw`
   function readRule() {
     const split = (id) => $(id).value.split(/[,、\n]/).map(item => item.trim()).filter(Boolean);
     const optionalNumber = (id) => $(id).value === '' ? null : Number($(id).value);
-    return {id:editingId,name:$('rule-name').value.trim(),priority:Number($('rule-priority').value),enabled:$('rule-enabled').checked,action:$('rule-action').value,categoryId:$('rule-action').value === 'categorize' ? $('rule-category').value : null,channelId:$('rule-channel').value.trim() || null,titleIncludes:split('rule-title-includes'),titleExcludes:split('rule-title-excludes'),descriptionIncludes:split('rule-description'),minDurationSeconds:optionalNumber('rule-min'),maxDurationSeconds:optionalNumber('rule-max'),kind:$('rule-kind').value};
+    return {id:editingId || draftRuleId,name:$('rule-name').value.trim(),priority:Number($('rule-priority').value),enabled:$('rule-enabled').checked,action:$('rule-action').value,categoryId:$('rule-action').value === 'categorize' ? $('rule-category').value : null,channelId:$('rule-channel').value.trim() || null,titleIncludes:split('rule-title-includes'),titleExcludes:split('rule-title-excludes'),descriptionIncludes:split('rule-description'),minDurationSeconds:optionalNumber('rule-min'),maxDurationSeconds:optionalNumber('rule-max'),kind:$('rule-kind').value};
   }
-  async function previewRule() {
+  async function previewRule(append = false) {
     if (!$('rule-form').reportValidity()) return;
     if ($('rule-action').value === 'categorize' && !$('rule-category').value) {announce('先に「保存先」でカテゴリを作成してください。',true);return;}
     if (busy) return; busy++;
     const trigger = $('preview-rule'); trigger.disabled = true;
     try {
-      const result = await api('/api/rules/preview',readRule());
-      const target = $('preview-results'); target.replaceChildren();
-      target.append(el('p','help', '確認対象 '+(result.sampled ?? result.total)+'件 · 一致 '+result.matches.length+'件。保存するまでルールは変わりません。'));
+      const rule = readRule(), snapshot = JSON.stringify(rule);
+      if (snapshot !== previewSnapshot) append = false;
+      if (!append) clearRulePreview();
+      const generation = previewGeneration;
+      const result = await api('/api/rules/preview',{...rule,...(append ? {cursor:previewCursor} : {})});
+      if (generation !== previewGeneration || JSON.stringify(readRule()) !== snapshot) return;
+      const target = $('preview-results');
+      previewSnapshot = snapshot; previewCursor = result.nextCursor;
+      previewSampled += result.sampled; previewMatched += result.matches.length;
+      if (!append) target.append(el('p','help'));
+      target.firstElementChild.textContent = '確認対象 '+previewSampled+'件 · 条件に一致 '+previewMatched+'件。既存ルール・手動指定・シリーズを含む判定を表示します。保存するまで変更されません。';
       const list = el('ul','preview-list');
-      result.matches.forEach(match => list.append(el('li','',match.title+' → '+(match.decision.categoryId ? categoryName(match.decision.categoryId) : statusNames[match.decision.status]))));
+      result.matches.forEach(match => {
+        const decision = match.effectiveDecision;
+        const previous = decision.reason.startsWith('rule:') ? state.rules.find(item => 'rule:'+item.id === decision.reason && item.id !== rule.id) : null;
+        const why = match.manualOverride ? '手動指定を保持' : decision.reason === 'series_hold' ? 'シリーズを保留中' : decision.reason === 'series_follow' ? 'シリーズの保存先' : previous ? '既存ルール: '+previous.name : decision.reason === 'awaiting_end' ? '公開・配信終了待ち' : '今回のルール';
+        list.append(el('li','',match.title+' / '+match.channelTitle+' → '+(decision.categoryId ? categoryName(decision.categoryId) : statusNames[decision.status])+'（'+why+'）'));
+      });
       target.append(list);
+      $('preview-more').hidden = previewCursor === null;
     } catch (error) {announce(errorText(error),true);}
     finally {busy--; trigger.disabled = false;}
   }
@@ -408,6 +490,15 @@ const client = String.raw`
     void mutate('/api/settings',{enabled:$('enabled').checked,dailyBudgetUnits:Number($('daily-budget').value),dailyInsertLimit:Number($('daily-limit').value),backfillDays:Number($('backfill-days').value)},'整理の設定を保存しました。');
   });
   $('rule-action').addEventListener('change',() => {$('rule-category').disabled = $('rule-action').value !== 'categorize';});
+  $('rule-template-apply').addEventListener('click',applyRuleTemplate);
+  $('rule-channel-search-button').addEventListener('click',() => {void searchRuleChannels(false);});
+  $('rule-channel-more').addEventListener('click',() => {void searchRuleChannels(true);});
+  $('rule-channel-options').addEventListener('change',() => {
+    if ($('rule-channel-options').value) { $('rule-channel').value = $('rule-channel-options').value; clearRulePreview(); }
+  });
+  $('rule-channel-clear').addEventListener('click',() => { $('rule-channel').value = ''; $('rule-channel-options').value = ''; clearRulePreview(); });
+  $('rule-channel-search').addEventListener('keydown',event => { if (event.key === 'Enter') {event.preventDefault(); void searchRuleChannels(false);} });
+  $('rule-form').addEventListener('input',clearRulePreview);
   $('rule-form').addEventListener('submit',async event => {
     event.preventDefault();
     if ($('rule-action').value === 'categorize' && !$('rule-category').value) {announce('先に「保存先」でカテゴリを作成してください。',true);return;}
@@ -415,6 +506,7 @@ const client = String.raw`
   });
   $('reset-rule').addEventListener('click',resetRule);
   $('preview-rule').addEventListener('click',() => {void previewRule();});
+  $('preview-more').addEventListener('click',() => {void previewRule(true);});
   $('category-form').addEventListener('submit',async event => {
     event.preventDefault();
     if (await mutate('/api/categories',{name:$('category-name').value.trim()},'保存先を作成しました。続けて非公開プレイリストを接続してください。')) $('category-name').value = '';
@@ -456,6 +548,7 @@ const client = String.raw`
     window.history.replaceState(null,'',pageUrl.pathname+pageUrl.search+pageUrl.hash);
   }
   void loadState();
+  void loadRuleTemplates();
 })();`;
 
 function escapeAttribute(value: string): string {
@@ -488,14 +581,15 @@ export function renderApp(nonce = ""): string {
 <div id="category-list" class="category-grid"></div><p class="footer-note">公開・限定公開や、ほかの人のプレイリストには書き込みません。</p></section>
 <section data-section="rules" hidden><div class="section-heading"><div><h1 tabindex="-1">ルール</h1><p>小さい優先度から順に確認し、最初に一致したルールを使います。</p></div><button id="reevaluate" type="button">最近の動画を見直す</button></div><div id="rule-list" class="rule-list"></div><hr class="divider">
 <form id="rule-form" class="panel"><h2 id="rule-heading">ルールを追加</h2><div class="form-grid">
+<div class="field span-all"><label for="rule-template">ひな形から条件を作る</label><div class="row"><select id="rule-template" disabled><option value="">ひな形を選択</option></select><button id="rule-template-apply" type="button">入力欄へ反映</button></div><p id="rule-template-help" class="help">ひな形を選び、対象チャンネル・保存先を指定して、結果を確認してから保存できます。</p></div>
 <div class="field"><label for="rule-name">ルール名</label><input id="rule-name" required maxlength="120" placeholder="内容がわかる名前"></div><div class="field"><label for="rule-priority">優先度（小さい順）</label><input id="rule-priority" type="number" value="100" required step="1"></div>
 <div class="field"><label for="rule-action">一致した動画の扱い</label><select id="rule-action"><option value="categorize">保存先へ分類</option><option value="review">要確認に残す</option><option value="exclude">対象外にする</option></select></div><div class="field"><label for="rule-category">保存先</label><select id="rule-category"></select></div>
-<div class="field span-all"><label for="rule-channel">チャンネルID（任意）</label><input id="rule-channel" placeholder="UCから始まるチャンネルID" pattern="UC[A-Za-z0-9_-]{22}" maxlength="24" autocomplete="off"><p class="help">チャンネル名ではなくIDを指定します。空欄ならすべてのチャンネルが対象です。チャンネルごとにルールを分けられます。</p></div>
+<div class="field span-all"><label for="rule-channel-search">登録チャンネルから選ぶ</label><div class="row"><input id="rule-channel-search" placeholder="チャンネル名を検索" maxlength="200" autocomplete="off"><button id="rule-channel-search-button" type="button">検索</button></div><label for="rule-channel-options">検索結果</label><select id="rule-channel-options"><option value="">チャンネルを検索してください</option></select><div class="actions"><button id="rule-channel-more" type="button" hidden>検索結果の続き</button><button id="rule-channel-clear" type="button">チャンネル指定を解除</button></div><p id="rule-channel-search-status" class="help" aria-live="polite"></p><label for="rule-channel">対象チャンネルID</label><input id="rule-channel" placeholder="検索結果を選択すると入力されます" pattern="UC[A-Za-z0-9_-]{22}" maxlength="24" autocomplete="off"><p class="help">空欄なら全チャンネルが対象です。歌枠・雑談などのひな形では、対象チャンネルを指定してください。</p></div>
 <div class="field"><label for="rule-title-includes">タイトルに含む言葉</label><textarea id="rule-title-includes" placeholder="キーワードを改行で区切って入力"></textarea></div><div class="field"><label for="rule-title-excludes">タイトルに含まない言葉</label><textarea id="rule-title-excludes" placeholder="除外したいキーワード"></textarea></div>
 <div class="field span-all"><label for="rule-description">説明文に含む言葉</label><textarea id="rule-description" placeholder="任意のキーワード"></textarea><p class="help">改行かカンマで区切ります。同じ欄の言葉はいずれか1つが一致すれば対象です。入力した条件はすべて満たす必要があります。</p></div>
 <div class="field"><label for="rule-min">最短の長さ（秒・任意）</label><input id="rule-min" type="number" min="0" step="1"></div><div class="field"><label for="rule-max">最長の長さ（秒・任意）</label><input id="rule-max" type="number" min="0" step="1"></div>
 <div class="field"><label for="rule-kind">動画の種類</label><select id="rule-kind"><option value="any">すべて</option><option value="upload">通常のアップロード</option><option value="archive">終了した配信アーカイブ</option></select><p class="help">通常動画と配信は種類で分けます。Shortsは長さだけで除外しません。</p></div><label class="checkbox"><input id="rule-enabled" type="checkbox" checked>このルールを有効にする</label>
-<div class="actions span-all"><button type="submit" class="primary">ルールを保存</button><button id="preview-rule" type="button">一致する動画を確認</button><button id="reset-rule" type="button" class="quiet">新しいルールに戻る</button></div></div><div id="preview-results" aria-live="polite"></div>
+<div class="actions span-all"><button type="submit" class="primary">ルールを保存</button><button id="preview-rule" type="button">一致する動画を確認</button><button id="reset-rule" type="button" class="quiet">新しいルールに戻る</button></div></div><div id="preview-results" aria-live="polite"></div><button id="preview-more" type="button" hidden>残りの動画も確認</button>
 <p class="help">条件が空欄のルールはすべての動画に一致します。一致するルールがない動画は要確認に残ります。保存・削除後は最近の動画を見直しますが、手動で指定した動画は変えません。</p></form></section>
 <section data-section="series" hidden><div class="section-heading"><div><h1 tabindex="-1">シリーズ</h1><p>プレイリスト単位で、保留・フォローを指定できます。</p></div></div><div id="series-list" class="rule-list"></div><hr class="divider">
 <form id="series-form" class="panel"><h2>シリーズを登録・編集</h2><div class="form-grid"><div class="field"><label for="series-name">シリーズ名</label><input id="series-name" required maxlength="120"></div><div class="field"><label for="series-playlist">YouTubeプレイリストのURL・ID</label><input id="series-playlist" required autocomplete="off"></div>
