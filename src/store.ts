@@ -108,12 +108,12 @@ export function quotaDay(now = Date.now()): string {
     day: "2-digit",
   }).format(now);
 }
-export async function reevaluate(db: D1Database, userId: string): Promise<void> {
+export async function reevaluate(db: D1Database, userId: string, discover = false): Promise<void> {
   const settings = await getSettings(db, userId);
   await db.batch([
     db
       .prepare(
-        "UPDATE videos SET status='pending',next_attempt_at=0,last_error=NULL,attempts=0,version=version+1,updated_at=? WHERE user_id=? AND manual_override=0 AND (published_at>=? OR (published_at='' AND discovered_at>=?))",
+        "UPDATE videos SET needs_classification=1,next_attempt_at=CASE WHEN status='added' AND last_error IS NULL THEN 0 ELSE next_attempt_at END,version=version+1,updated_at=? WHERE user_id=? AND manual_override=0 AND (published_at>=? OR (published_at='' AND discovered_at>=?))",
       )
       .bind(
         Date.now(),
@@ -121,10 +121,18 @@ export async function reevaluate(db: D1Database, userId: string): Promise<void> 
         new Date(Date.now() - settings.backfillDays * 86400000).toISOString(),
         Date.now() - settings.backfillDays * 86400000,
       ),
-    db
-      .prepare("UPDATE channels SET last_reconciled_at=0,reconcile_cursor=NULL WHERE user_id=?")
-      .bind(userId),
-    db.prepare("UPDATE series SET last_checked_at=0,cursor=NULL WHERE user_id=?").bind(userId),
+    ...(discover
+      ? [
+          db
+            .prepare(
+              "UPDATE channels SET last_reconciled_at=0,reconcile_cursor=NULL WHERE user_id=?",
+            )
+            .bind(userId),
+          db
+            .prepare("UPDATE series SET last_checked_at=0,cursor=NULL WHERE user_id=?")
+            .bind(userId),
+        ]
+      : []),
   ]);
 }
 export async function appState(
@@ -250,6 +258,7 @@ export async function appState(
       status: row.status,
       categoryId: row.category_id,
       manualOverride: !!row.manual_override,
+      needsClassification: !!row.needs_classification,
       reason: row.reason,
       lastError: row.last_error,
       version: row.version,

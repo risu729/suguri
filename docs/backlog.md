@@ -8,6 +8,8 @@
 - Signed/bounded WebSub ingestion, challenge verification and lease renewal.
 - Paginated subscription sync, uploads reconciliation and bounded backfill.
 - Literal rule evaluation, live deferral, metadata refresh and Inbox review.
+- Cached reclassification with stable displayed decisions and discovery cursors;
+  atomic version-checked Inbox batches and scoped failed-channel retry.
 - Editable selection templates, active-channel search, paginated effective-rule
   previews, and explicit series hold/follow shortcuts through the shared service.
 - Private owned playlist create/attach, insertion, category moves and exclusion.

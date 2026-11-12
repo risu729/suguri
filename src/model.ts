@@ -59,6 +59,7 @@ export interface VideoRow {
   thumbnail_url: string;
   metadata_fetched_at: number;
   metadata_dirty: number;
+  needs_classification: number;
   status: VideoStatus;
   category_id: CategoryId | null;
   manual_override: number;
@@ -88,6 +89,7 @@ export interface Settings {
 }
 
 export interface VideoView extends VideoMetadata {
+  needsClassification: boolean;
   status: VideoStatus;
   categoryId: CategoryId | null;
   manualOverride: boolean;

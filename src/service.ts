@@ -11,17 +11,20 @@ import { classify, classifySelection, matchesRule, validateRule } from "./rules.
 import { ruleTemplates } from "./rule-templates.ts";
 import { appState, audit, getRules, getSettings, reevaluate, withLease } from "./store.ts";
 import { HttpError, integer, record, string } from "./util.ts";
+import { updateVideos } from "./video-actions.ts";
 
 export const operations = [
   "config",
   "state",
   "channels_list",
+  "channels_retry",
   "rules_templates",
   "settings",
   "sync",
   "process",
   "videos_add",
   "videos_update",
+  "videos_batch",
   "rules_save",
   "rules_delete",
   "rules_preview",
@@ -210,12 +213,24 @@ export async function execute(
         )
           .bind(Number(enabled), budget, limit, days, uid)
           .run();
-        if (days !== previous.backfillDays) await reevaluate(env.DB, uid);
+        if (days !== previous.backfillDays)
+          await reevaluate(env.DB, uid, days > previous.backfillDays);
         break;
       }
       case "sync":
         await requestSync(env, uid);
         break;
+      case "channels_retry": {
+        const channel = string(input["id"], 24);
+        if (!/^UC[A-Za-z0-9_-]{22}$/.test(channel)) throw new HttpError(400, "invalid_channel");
+        const changed = await env.DB.prepare(
+          "UPDATE channels SET reconcile_cursor=NULL,last_reconciled_at=0,last_error=NULL WHERE user_id=? AND id=? AND active=1 AND last_error IS NOT NULL",
+        )
+          .bind(uid, channel)
+          .run();
+        if (!changed.meta.changes) throw new HttpError(409, "channel_not_failed");
+        break;
+      }
       case "reevaluate":
         await reevaluate(env.DB, uid);
         break;
@@ -239,43 +254,27 @@ export async function execute(
         result = { ok: true, id: video };
         break;
       }
-      case "videos_update": {
-        const video = string(input["id"], 11),
-          version = integer(input["version"], 0, Number.MAX_SAFE_INTEGER),
-          action = input["action"];
+      case "videos_update":
+      case "videos_batch": {
+        if (input["action"] === "assign") await categoryExists(env, uid, input["categoryId"]);
         if (
-          !/^[A-Za-z0-9_-]{11}$/.test(video) ||
-          !["assign", "exclude", "reset", "retry"].includes(String(action))
+          operation === "videos_update" &&
+          !(await env.DB.prepare("SELECT 1 FROM videos WHERE user_id=? AND id=?")
+            .bind(uid, string(input["id"], 11))
+            .first())
         )
-          throw new HttpError(400, "invalid_input");
-        const row = await env.DB.prepare("SELECT * FROM videos WHERE user_id=? AND id=?")
-          .bind(uid, video)
-          .first<VideoRow>();
-        if (!row) throw new HttpError(404, "not_found");
-        if (row.version !== version) throw new HttpError(409, "stale");
-        const category =
-          action === "assign"
-            ? await categoryExists(env, uid, input["categoryId"])
-            : action === "retry"
-              ? row.category_id
-              : null;
-        const manual = action === "reset" ? 0 : action === "retry" ? row.manual_override : 1;
-        const status =
-          action === "assign" ? "queued" : action === "exclude" ? "excluded" : "pending";
-        await env.DB.prepare(
-          "UPDATE videos SET status=?,category_id=?,manual_override=?,reason=?,last_error=NULL,attempts=0,next_attempt_at=0,updated_at=?,version=version+1 WHERE user_id=? AND id=? AND version=?",
-        )
-          .bind(
-            status,
-            category,
-            manual,
-            action === "retry" ? row.reason : `manual:${String(action)}`,
-            Date.now(),
-            uid,
-            video,
-            version,
-          )
-          .run();
+          throw new HttpError(404, "not_found");
+        const count = await updateVideos(
+          env.DB,
+          uid,
+          operation === "videos_batch"
+            ? input
+            : {
+                ...input,
+                items: [{ id: input["id"], version: input["version"] }],
+              },
+        );
+        result = { ok: true, updated: count };
         break;
       }
       case "rules_save": {

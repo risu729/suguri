@@ -153,11 +153,15 @@ describe("shared per-user application", () => {
         .run();
     }
     await execute(env, owner, "rules_save", rule);
-    const rows = await env.DB.prepare("SELECT id,status FROM videos ORDER BY id").all<{
+    const rows = await env.DB.prepare(
+      "SELECT id,status,needs_classification FROM videos ORDER BY id",
+    ).all<{
       id: string;
       status: string;
+      needs_classification: number;
     }>();
-    expect(rows.results.map((row) => row.status)).toEqual(["excluded", "pending", "excluded"]);
+    expect(rows.results.map((row) => row.status)).toEqual(["excluded", "excluded", "excluded"]);
+    expect(rows.results.map((row) => row.needs_classification)).toEqual([0, 1, 0]);
   });
   it("checks version and prevents another user mutating a candidate", async () => {
     await execute(env, owner, "videos_add", { url: "https://youtube.com/shorts/abcdefghijk" });
