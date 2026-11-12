@@ -111,7 +111,21 @@ export interface AppState {
   nextCursor: number | null;
   counts: Record<string, number>;
   quota: { day: string; units: number; insertions: number };
-  channels: { total: number; activeWebSub: number };
+  channels: { total: number; activeWebSub: number; backfillComplete: number; errors: number };
+  notifications: {
+    videos: number;
+    lastReceivedAt: number | null;
+    recent: {
+      videoId: string;
+      firstReceivedAt: number;
+      lastReceivedAt: number;
+      discoveredFromNotificationAt: number | null;
+      publishedAt: string;
+      status: VideoStatus;
+      manualOverride: number;
+      addedAt: number | null;
+    }[];
+  };
   lastSyncAt: number | null;
   lastRunAt: number | null;
   lastError: string | null;

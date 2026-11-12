@@ -353,7 +353,7 @@ async function reconcileUploads(env: Env, userId: string, api: YouTube): Promise
   const cutoff = Date.now() - settings.backfillDays * day;
   const rows =
     await env.DB.prepare(`SELECT id,reconcile_cursor FROM channels WHERE user_id=? AND active=1
-    AND (reconcile_cursor IS NOT NULL OR last_reconciled_at<?) ORDER BY last_reconciled_at,id LIMIT 2`)
+    AND (reconcile_cursor IS NOT NULL OR last_reconciled_at<?) ORDER BY last_reconciled_at,id LIMIT 8`)
       .bind(userId, Date.now() - 6 * 3600000)
       .all<{ id: string; reconcile_cursor: string | null }>();
   for (const channel of rows.results) {

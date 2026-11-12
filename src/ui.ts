@@ -353,7 +353,8 @@ const client = String.raw`
     $('quota-progress').max = Math.max(1,state.settings.dailyBudgetUnits);
     $('quota-progress').value = Math.min(state.quota.units,Math.max(1,state.settings.dailyBudgetUnits));
     $('sync-status').textContent = '最終同期 '+dateText(state.lastSyncAt)+' · 最終整理 '+dateText(state.lastRunAt);
-    $('websub-status').textContent = '新着通知を受け取るチャンネル: '+state.channels.activeWebSub+'件';
+    $('websub-status').textContent = '新着通知の設定: '+state.channels.activeWebSub+' / '+state.channels.total+'チャンネル · 過去の動画の確認: '+state.channels.backfillComplete+' / '+state.channels.total+'チャンネル';
+    $('notification-status').textContent = '通知で受け取った動画: '+state.notifications.videos+'件 · 最終受信 '+dateText(state.notifications.lastReceivedAt);
     $('connection-warning').hidden = !state.reconnectRequired;
     $('processing-warning').hidden = !state.lastError;
     categoryOptions($('category-filter'),true); categoryOptions($('rule-category')); categoryOptions($('series-category'),true,'保存先を指定しない');
@@ -505,6 +506,6 @@ export function renderApp(nonce = ""): string {
 <div class="field"><label for="daily-limit">1日に追加する動画の上限</label><input id="daily-limit" type="number" min="1" max="150" step="1" required></div><div class="field"><label for="daily-budget">1日のAPI利用上限（ユニット）</label><input id="daily-budget" type="number" min="100" max="9500" step="1" required><p class="help">YouTube APIの利用枠です。動画の追加・情報取得の両方で使います。</p></div>
 <div class="field"><label for="backfill-days">過去の動画を確認する範囲</label><select id="backfill-days"><option value="7">過去7日間</option><option value="30">過去30日間</option></select><p class="help">登録チャンネルの同期や、ルール変更時の見直しに使います。保存済みの手動指定は保持します。</p></div></div><div class="actions settings-actions"><button class="primary" type="submit">設定を保存</button></div></form>
 <div class="panel"><h2>本日の利用量</h2><div class="stats"><div><p class="muted">APIユニット</p><p id="quota-units" class="stat-value">0</p></div><div><p class="muted">動画の追加</p><p id="quota-insertions" class="stat-value">0</p></div><div><p class="muted">登録チャンネル</p><p id="channel-total" class="stat-value">0</p></div></div><progress id="quota-progress" class="progress" aria-label="1日のAPI利用上限に対する使用量" max="1" value="0"></progress><p class="help">YouTubeの利用量は米国太平洋時間の日付で集計します。</p></div>
-<div class="panel setting-row"><div><h2>登録チャンネル</h2><p id="sync-status" class="muted"></p><p id="websub-status" class="muted"></p><p class="help">新着動画を順次受け取り、通知が届かなかった動画も定期的に確認します。</p></div><button id="sync" type="button">登録チャンネルを同期</button></div></section>
+<div class="panel setting-row"><div><h2>登録チャンネル</h2><p id="sync-status" class="muted"></p><p id="websub-status" class="muted"></p><p id="notification-status" class="muted"></p><p class="help">新着動画を順次受け取り、通知が届かなかった動画も定期的に確認します。通知の件数は受信記録を開始してからの集計です。</p></div><button id="sync" type="button">登録チャンネルを同期</button></div></section>
 </div></main></div><script nonce="${safeNonce}">${client}</script></body></html>`;
 }

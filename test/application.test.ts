@@ -28,6 +28,62 @@ const rule = {
   kind: "any",
 };
 describe("shared per-user application", () => {
+  it("reports scoped discovery progress and distinct verified notifications separately from backfill", async () => {
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO channels(user_id,id,callback_token,hub_secret,lease_expires_at,last_reconciled_at) VALUES('alice','ready','synthetic','synthetic',?,?)",
+      ).bind(now + 60000, now),
+      env.DB.prepare(
+        "INSERT INTO channels(user_id,id,callback_token,hub_secret,last_reconciled_at,reconcile_cursor) VALUES('alice','partial','synthetic','synthetic',?,'page')",
+      ).bind(now),
+      env.DB.prepare(
+        "INSERT INTO channels(user_id,id,callback_token,hub_secret) VALUES('alice','new','synthetic','synthetic')",
+      ),
+      env.DB.prepare(
+        "INSERT INTO channels(user_id,id,callback_token,hub_secret,active,last_reconciled_at) VALUES('alice','inactive','synthetic','synthetic',0,?)",
+      ).bind(now),
+      env.DB.prepare(
+        "INSERT INTO channels(user_id,id,callback_token,hub_secret,lease_expires_at,last_reconciled_at) VALUES('bob','other','synthetic','synthetic',?,?)",
+      ).bind(now + 60000, now),
+      env.DB.prepare(
+        "INSERT INTO videos(user_id,id,channel_id,published_at,status,discovered_at,updated_at) VALUES('alice','abcdefghijk','ready',?,'added',?,?)",
+      ).bind(new Date(now).toISOString(), now, now),
+      env.DB.prepare(
+        "INSERT INTO videos(user_id,id,channel_id,discovered_at,updated_at) VALUES('alice','backfill123','ready',?,?)",
+      ).bind(now, now),
+      env.DB.prepare(
+        "INSERT INTO audit(user_id,actor,video_id,action,detail,created_at) VALUES('alice','websub','abcdefghijk','websub_received','discovered',?)",
+      ).bind(now),
+      env.DB.prepare(
+        "INSERT INTO audit(user_id,actor,video_id,action,detail,created_at) VALUES('alice','websub','abcdefghijk','websub_received','updated',?)",
+      ).bind(now + 1),
+      env.DB.prepare(
+        "INSERT INTO audit(user_id,actor,video_id,action,detail,created_at) VALUES('bob','websub','private1234','websub_received','validated',?)",
+      ).bind(now + 2),
+      env.DB.prepare(
+        "INSERT INTO operations(user_id,video_id,category_id,playlist_id,kind,state,created_at,updated_at) VALUES('alice','abcdefghijk','music','synthetic','insert','done',?,?)",
+      ).bind(now, now + 3),
+    ]);
+    const state = await appState(env.DB, owner, {});
+    expect(state.channels).toEqual({ total: 3, activeWebSub: 1, backfillComplete: 1, errors: 0 });
+    expect(state.notifications).toEqual({
+      videos: 1,
+      lastReceivedAt: now + 1,
+      recent: [
+        {
+          videoId: "abcdefghijk",
+          firstReceivedAt: now,
+          lastReceivedAt: now + 1,
+          discoveredFromNotificationAt: now,
+          publishedAt: new Date(now).toISOString(),
+          status: "added",
+          manualOverride: 0,
+          addedAt: now + 3,
+        },
+      ],
+    });
+  });
   it("starts paused without personal rules or categories", async () => {
     const state = await appState(env.DB, owner, {});
     expect(state.settings.enabled).toBe(false);
