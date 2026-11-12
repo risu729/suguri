@@ -134,6 +134,19 @@ invariants. No Queue or Workflow resource is provisioned.
 
 ## Metadata and limits
 
+Uploads reconciliation isolates provider failures by channel. Its existing JSON
+cursor retains the exact page plus a bounded retry deadline and attempt count;
+backoff channels are filtered before the batch limit. Transient failures back off
+up to six hours, while non-retryable provider failures are checked again after a
+day. Failed pages are not counted as completed backfill and remain visible in
+application state. Database failures and connection, quota, lease, or per-pass
+limits do not become channel-specific retries. Successful page persistence clears
+retry metadata before advancing the cursor.
+
+Explicitly upcoming/live videos without a duration remain deferred until they
+end. Missing duration on ordinary or ended videos and present malformed duration
+values are still rejected; this fallback does not classify a premiere as an upload.
+
 Cached display metadata is refreshed on updates and periodically. A scheduled
 sweep clears display metadata older than 29 days while preserving user decisions
 and operation receipts. A disconnected account does not keep displaying stale

@@ -66,7 +66,13 @@ describe("shared per-user application", () => {
       ).bind(now, now + 3),
     ]);
     const state = await appState(env.DB, owner, {});
-    expect(state.channels).toEqual({ total: 3, activeWebSub: 1, backfillComplete: 1, errors: 0 });
+    expect(state.channels).toEqual({
+      total: 3,
+      activeWebSub: 1,
+      backfillComplete: 1,
+      errors: 0,
+      backfillFailed: 0,
+    });
     expect(state.notifications).toEqual({
       videos: 1,
       lastReceivedAt: now + 1,
@@ -83,6 +89,32 @@ describe("shared per-user application", () => {
         },
       ],
     });
+  });
+  it("shows scoped reconciliation failures without counting them as completed backfill", async () => {
+    const retry = Date.now() + 60000;
+    await env.DB.batch(
+      ["alice", "bob"].map((uid) =>
+        env.DB.prepare(
+          "INSERT INTO channels(user_id,id,title,callback_token,hub_secret,last_reconciled_at,reconcile_cursor) VALUES(?,?,'Synthetic','synthetic','synthetic',?,?)",
+        ).bind(
+          uid,
+          uid,
+          Date.now(),
+          JSON.stringify({
+            uploads: "UUexample123",
+            page: "same-page",
+            error: "youtube_http_404",
+            retryAt: retry,
+          }),
+        ),
+      ),
+    );
+    const state = await appState(env.DB, owner, {});
+    expect(state.channels.backfillComplete).toBe(0);
+    expect(state.channels.backfillFailed).toBe(1);
+    expect(state.collectionErrors).toEqual([
+      { channelId: "alice", title: "Synthetic", code: "youtube_http_404", nextAttemptAt: retry },
+    ]);
   });
   it("starts paused without personal rules or categories", async () => {
     const state = await appState(env.DB, owner, {});

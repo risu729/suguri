@@ -103,6 +103,93 @@ describe("YouTube provider boundary", () => {
     ).toMatchObject({ insertions: 1 });
   });
 
+  it.each(["upcoming", "live"])(
+    "accepts missing duration only for an unfinished %s video",
+    async (liveState) => {
+      const row: Record<string, unknown> = {
+        id: video,
+        snippet: {
+          channelId: owner,
+          channelTitle: "Synthetic",
+          title: "Synthetic broadcast",
+          description: "",
+          publishedAt: new Date().toISOString(),
+          liveBroadcastContent: liveState,
+        },
+      };
+      const fetcher = vi.fn<typeof fetch>(async () => Response.json({ items: [row] }));
+      expect(await new YouTube(env, user, fetcher).video(video)).toMatchObject({
+        liveState,
+        durationSeconds: 0,
+      });
+      row["contentDetails"] = {};
+      expect(await new YouTube(env, user, fetcher).video(video)).toMatchObject({
+        liveState,
+        durationSeconds: 0,
+      });
+      row["liveStreamingDetails"] = { actualEndTime: new Date().toISOString() };
+      await expect(new YouTube(env, user, fetcher).video(video)).rejects.toMatchObject({
+        code: "invalid_provider_response",
+      });
+      row["contentDetails"] = { duration: "PT3M" };
+      expect(await new YouTube(env, user, fetcher).video(video)).toMatchObject({
+        liveState: "none",
+        durationSeconds: 180,
+      });
+    },
+  );
+
+  it.each([null, "", 0, "not-a-duration"])(
+    "rejects present malformed broadcast duration %j",
+    async (duration) => {
+      const fetcher = vi.fn<typeof fetch>(async () =>
+        Response.json({
+          items: [
+            {
+              id: video,
+              snippet: {
+                channelId: owner,
+                channelTitle: "Synthetic",
+                title: "Synthetic",
+                description: "",
+                publishedAt: new Date().toISOString(),
+                liveBroadcastContent: "upcoming",
+              },
+              contentDetails: { duration },
+            },
+          ],
+        }),
+      );
+      await expect(new YouTube(env, user, fetcher).video(video)).rejects.toBeInstanceOf(Error);
+    },
+  );
+
+  it("rejects missing duration for ordinary videos and malformed details for upcoming videos", async () => {
+    const row: Record<string, unknown> = {
+      id: video,
+      snippet: {
+        channelId: owner,
+        channelTitle: "Synthetic",
+        title: "Synthetic",
+        description: "",
+        publishedAt: new Date().toISOString(),
+        liveBroadcastContent: "none",
+      },
+    };
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ items: [row] }));
+    await expect(new YouTube(env, user, fetcher).video(video)).rejects.toMatchObject({
+      code: "invalid_provider_response",
+    });
+    row["snippet"] = {
+      ...(row["snippet"] as Record<string, unknown>),
+      liveBroadcastContent: "upcoming",
+    };
+    row["contentDetails"] = null;
+    await expect(new YouTube(env, user, fetcher).video(video)).rejects.toMatchObject({
+      code: "invalid_provider_response",
+    });
+  });
+
   it.each([
     { receipt: [] },
     { receipt: { id: "" } },

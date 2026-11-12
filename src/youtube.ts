@@ -328,6 +328,12 @@ export class YouTube {
     ) {
       throw new YouTubeError("invalid_provider_response", true);
     }
+    const liveState = endedAt ? "none" : live === "live" || live === "upcoming" ? live : "none";
+    const details = row["contentDetails"] === undefined ? {} : object(row["contentDetails"]);
+    // Unfinished broadcasts may not have a duration yet. They remain deferred.
+    const duration = details["duration"];
+    const seconds =
+      duration === undefined && liveState !== "none" ? 0 : durationSeconds(text(duration, 100));
     return {
       id,
       channelId,
@@ -335,8 +341,8 @@ export class YouTube {
       title: text(snippet["title"], 200),
       description: text(snippet["description"], 10000),
       publishedAt,
-      durationSeconds: durationSeconds(text(object(row["contentDetails"])["duration"], 100)),
-      liveState: endedAt ? "none" : live === "live" || live === "upcoming" ? live : "none",
+      durationSeconds: seconds,
+      liveState,
       endedAt,
       thumbnailUrl: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
     };
