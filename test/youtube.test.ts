@@ -28,6 +28,20 @@ beforeEach(async () => {
 });
 
 describe("YouTube provider boundary", () => {
+  it("rejects redirects without forwarding bearer credentials", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      expect(new Request(input, init).redirect).toBe("manual");
+      return new Response(null, {
+        status: 307,
+        headers: { Location: "https://untrusted.example.invalid/" },
+      });
+    });
+    await expect(new YouTube(env, user, fetcher).video(video)).rejects.toMatchObject({
+      code: "youtube_http_307",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("parses durations without using duration to guess Shorts", () => {
     expect(durationSeconds("PT35S")).toBe(35);
     expect(durationSeconds("P0D")).toBe(0);
@@ -39,7 +53,7 @@ describe("YouTube provider boundary", () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
       expect(new URL(String(input)).origin).toBe("https://www.googleapis.com");
       expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer synthetic-access");
-      expect(init?.redirect).toBe("error");
+      expect(new Request(input, init).redirect).toBe("manual");
       return Response.json({
         items: [
           {

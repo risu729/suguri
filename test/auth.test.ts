@@ -18,6 +18,58 @@ import { appState } from "../src/store.ts";
 
 beforeEach(resetDatabase);
 describe("Access identity and Google authorization", () => {
+  it.each([false, true])(
+    "constructs Workers requests and rejects token redirects: %s",
+    async (redirect) => {
+      await seedUser("alice");
+      const principal: Principal = { userId: "alice", actor: "user:alice", transport: "browser" };
+      const start = await startOAuth(env, principal);
+      const location = new URL(start.headers.get("Location")!);
+      const request = new Request(
+        `${env.APP_ORIGIN}/auth/callback?state=${location.searchParams.get("state")}&code=synthetic-code`,
+        { headers: { Cookie: start.headers.get("Set-Cookie")!.split(";")[0]! } },
+      );
+      const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+        const outbound = new Request(input, init);
+        expect(outbound.redirect).toBe("manual");
+        if (outbound.url === "https://oauth2.googleapis.com/token") {
+          if (redirect)
+            return new Response(null, {
+              status: 302,
+              headers: { Location: "https://untrusted.example.invalid/" },
+            });
+          return Response.json({
+            access_token: "synthetic-access",
+            refresh_token: "synthetic-refresh",
+            expires_in: 3600,
+            scope: "https://www.googleapis.com/auth/youtube.force-ssl",
+          });
+        }
+        expect(outbound.url).toBe(
+          "https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true",
+        );
+        return Response.json({
+          items: [{ id: `UC${"a".repeat(22)}`, snippet: { title: "Synthetic" } }],
+        });
+      });
+      if (redirect) {
+        await expect(finishOAuth(request, env, principal, fetcher)).rejects.toMatchObject({
+          code: "google_token_http_302",
+        });
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        expect(await env.DB.prepare("SELECT count(*) AS n FROM connection").first()).toMatchObject({
+          n: 0,
+        });
+      } else {
+        expect((await finishOAuth(request, env, principal, fetcher)).status).toBe(302);
+        expect(fetcher).toHaveBeenCalledTimes(2);
+        await env.DB.prepare("UPDATE connection SET expires_at=0 WHERE user_id='alice'").run();
+        expect(await getAccessToken(env, "alice", fetcher)).toBe("synthetic-access");
+        expect(fetcher).toHaveBeenCalledTimes(3);
+      }
+    },
+  );
+
   it("only exposes allowlisted connection failure codes", () => {
     expect(oauthFailureCode(new Error("synthetic-secret"))).toBe("failed");
     expect(oauthFailureCode(new HttpError(502, "synthetic-secret"))).toBe("failed");

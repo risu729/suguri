@@ -352,7 +352,7 @@ export async function renewSubscriptions(
       // oxlint-disable-next-line no-await-in-loop -- Bound hub requests sequentially within the tick's lease.
       const response = await fetcher(hub, {
         method: "POST",
-        redirect: "error",
+        redirect: "manual",
         body: form,
         signal: AbortSignal.timeout(5000),
       });

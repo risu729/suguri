@@ -228,7 +228,7 @@ export class YouTube {
     try {
       const response = await this.fetcher(url, {
         method,
-        redirect: "error",
+        redirect: "manual",
         signal: controller.signal,
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),

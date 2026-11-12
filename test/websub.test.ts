@@ -152,6 +152,7 @@ describe("authenticated WebSub ingestion", () => {
     await env.DB.prepare("UPDATE channels SET renew_after=0 WHERE user_id=?").bind(user).run();
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
       expect(String(input)).toBe("https://pubsubhubbub.appspot.com/subscribe");
+      expect(new Request(input, init).redirect).toBe("manual");
       const params = new URLSearchParams(String(init?.body));
       expect(params.get("hub.callback")).toBe(callback);
       expect(params.get("hub.secret")).toBe(secret);
@@ -164,5 +165,24 @@ describe("authenticated WebSub ingestion", () => {
     });
     await renewSubscriptions(env, user, fetcher);
     expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(
+      await env.DB.prepare("SELECT last_error FROM channels WHERE user_id=?").bind(user).first(),
+    ).toMatchObject({ last_error: null });
+  });
+
+  it("rejects hub redirects without forwarding callback capabilities", async () => {
+    await env.DB.prepare("UPDATE channels SET renew_after=0 WHERE user_id=?").bind(user).run();
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      expect(new Request(input, init).redirect).toBe("manual");
+      return new Response(null, {
+        status: 307,
+        headers: { Location: "https://untrusted.example.invalid/" },
+      });
+    });
+    await renewSubscriptions(env, user, fetcher);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(
+      await env.DB.prepare("SELECT last_error FROM channels WHERE user_id=?").bind(user).first(),
+    ).toMatchObject({ last_error: "hub_request_failed" });
   });
 });
