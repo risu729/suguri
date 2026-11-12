@@ -125,11 +125,16 @@ async function googleJson(
   try {
     response = await fetcher(url, {
       ...init,
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(10000),
     });
   } catch {
     throw new HttpError(502, "google_unavailable");
+  }
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel();
+    const stage = url.startsWith("https://www.googleapis.com/youtube/") ? "channel" : "token";
+    throw new HttpError(502, `google_${stage}_http_${response.status}`);
   }
   let value: Record<string, unknown>;
   try {
