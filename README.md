@@ -5,16 +5,20 @@ The name comes from the Japanese word *yorisuguri*: carefully selected.
 
 ## Status
 
-The initial application is implemented for local verification: WebSub ingestion,
+The initial application implements WebSub ingestion,
 per-user rules and Inbox, category-specific private playlists, durable processing,
 Cloudflare Access identity, separate Google authorization, and shared UI/MCP
 operations. The health endpoint reports implementation status, not live readiness.
 
-The personal installation has been deployed. Google connection, real notification
-delivery, and playlist writes have separate activation checks; deployment alone
-does not establish their success.
-Follow [activation and acceptance](docs/activation.md) before enabling automation.
-AI classification is a future extension; the initial selection engine uses rules.
+The personal installation is deployed and connected to its owner's selected YouTube
+channel. Subscription synchronization, real hub challenge acceptance, and rule-based
+writes to owned private playlists have been observed. Initial uploads reconciliation and
+naturally arriving notification delivery have separate acceptance checks; deployment or
+challenge acceptance alone does not establish notification delivery. See the
+[dated verification record](docs/verification-2026-11-12.md) for the evidence and
+remaining checks. Follow [activation and acceptance](docs/activation.md) before enabling
+automation. AI classification is a future extension; the initial selection engine uses
+rules.
 
 Static [application information](https://suguri.takuk.me/info/about) and the
 [privacy policy](https://suguri.takuk.me/info/privacy) support Google OAuth branding.
