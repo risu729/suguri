@@ -171,6 +171,7 @@ export async function appState(
     series,
     notificationCount,
     notifications,
+    collectionErrors,
   ] = await Promise.all([
     getSettings(db, uid),
     getCategories(db, uid),
@@ -192,7 +193,7 @@ export async function appState(
       .first<{ units: number; insertions: number }>(),
     db
       .prepare(
-        "SELECT count(*) AS total,coalesce(sum(lease_expires_at>?),0) AS activeWebSub,coalesce(sum(last_reconciled_at>0 AND reconcile_cursor IS NULL),0) AS backfillComplete,coalesce(sum(last_error IS NOT NULL),0) AS errors FROM channels WHERE user_id=? AND active=1",
+        "SELECT count(*) AS total,coalesce(sum(lease_expires_at>?),0) AS activeWebSub,coalesce(sum(last_reconciled_at>0 AND reconcile_cursor IS NULL),0) AS backfillComplete,coalesce(sum(last_error IS NOT NULL),0) AS errors,coalesce(sum(CASE WHEN json_valid(reconcile_cursor) THEN json_extract(reconcile_cursor,'$.error') IS NOT NULL ELSE 0 END),0) AS backfillFailed FROM channels WHERE user_id=? AND active=1",
       )
       .bind(Date.now(), uid)
       .first<AppState["channels"]>(),
@@ -226,6 +227,13 @@ export async function appState(
         GROUP BY a.video_id ORDER BY lastReceivedAt DESC,a.video_id LIMIT 20`)
       .bind(uid)
       .all<AppState["notifications"]["recent"][number]>(),
+    db
+      .prepare(`SELECT id AS channelId,title,json_extract(reconcile_cursor,'$.error') AS code,
+      json_extract(reconcile_cursor,'$.retryAt') AS nextAttemptAt FROM channels
+      WHERE user_id=? AND active=1 AND CASE WHEN json_valid(reconcile_cursor) THEN json_extract(reconcile_cursor,'$.error') IS NOT NULL ELSE 0 END
+      ORDER BY id LIMIT 25`)
+      .bind(uid)
+      .all<AppState["collectionErrors"][number]>(),
   ]);
   return {
     authenticated: true,
@@ -250,7 +258,14 @@ export async function appState(
     nextCursor: rows.length > 50 ? offset + 50 : null,
     counts: Object.fromEntries(counts.results.map((row) => [row.status, row.n])),
     quota: { day: quotaDay(), units: quota?.units ?? 0, insertions: quota?.insertions ?? 0 },
-    channels: channels ?? { total: 0, activeWebSub: 0, backfillComplete: 0, errors: 0 },
+    channels: channels ?? {
+      total: 0,
+      activeWebSub: 0,
+      backfillComplete: 0,
+      errors: 0,
+      backfillFailed: 0,
+    },
+    collectionErrors: collectionErrors.results,
     notifications: {
       videos: notificationCount?.videos ?? 0,
       lastReceivedAt: notificationCount?.lastReceivedAt ?? null,

@@ -348,54 +348,111 @@ async function enqueue(
     );
 }
 
+interface UploadProgress {
+  uploads: string | null;
+  page: string | null;
+  attempts?: number;
+  retryAt?: number;
+  error?: string;
+}
+
+function uploadProgress(cursor: string | null): UploadProgress {
+  if (!cursor) return { uploads: null, page: null };
+  let progress: UploadProgress;
+  try {
+    progress = JSON.parse(cursor) as UploadProgress;
+  } catch {
+    throw new YouTubeError("invalid_reconcile_cursor");
+  }
+  if (
+    !progress ||
+    typeof progress !== "object" ||
+    (progress.uploads !== null &&
+      (typeof progress.uploads !== "string" || !playlistIdPattern.test(progress.uploads))) ||
+    (progress.page !== null && typeof progress.page !== "string") ||
+    (progress.attempts !== undefined &&
+      (!Number.isSafeInteger(progress.attempts) || progress.attempts < 0)) ||
+    (progress.retryAt !== undefined &&
+      (!Number.isSafeInteger(progress.retryAt) || progress.retryAt < 0))
+  )
+    throw new YouTubeError("invalid_reconcile_cursor");
+  return progress;
+}
+
 async function reconcileUploads(env: Env, userId: string, api: YouTube): Promise<void> {
   const settings = await getSettings(env.DB, userId);
   const cutoff = Date.now() - settings.backfillDays * day;
   const rows =
     await env.DB.prepare(`SELECT id,reconcile_cursor FROM channels WHERE user_id=? AND active=1
-    AND (reconcile_cursor IS NOT NULL OR last_reconciled_at<?) ORDER BY last_reconciled_at,id LIMIT 8`)
-      .bind(userId, Date.now() - 6 * 3600000)
+    AND (reconcile_cursor IS NOT NULL OR last_reconciled_at<?)
+    AND CASE WHEN json_valid(reconcile_cursor) THEN
+      CASE WHEN json_type(reconcile_cursor,'$.retryAt')='integer'
+        AND json_extract(reconcile_cursor,'$.retryAt') BETWEEN 0 AND 9007199254740991
+        THEN json_extract(reconcile_cursor,'$.retryAt') ELSE 0 END
+      ELSE 0 END<=?
+    ORDER BY last_reconciled_at,id LIMIT 8`)
+      .bind(userId, Date.now() - 6 * 3600000, Date.now())
       .all<{ id: string; reconcile_cursor: string | null }>();
   for (const channel of rows.results) {
-    let progress: { uploads: string; page: string | null };
-    if (channel.reconcile_cursor) {
-      try {
-        progress = JSON.parse(channel.reconcile_cursor) as { uploads: string; page: string | null };
-      } catch {
-        throw new YouTubeError("invalid_reconcile_cursor");
+    let progress: UploadProgress = { uploads: null, page: null };
+    try {
+      progress = uploadProgress(channel.reconcile_cursor);
+      if (!progress.uploads) {
+        // oxlint-disable-next-line no-await-in-loop -- Resolve the actual uploads playlist instead of deriving its ID.
+        progress.uploads = await api.uploads(channel.id);
       }
-      if (
-        !playlistIdPattern.test(progress.uploads) ||
-        (progress.page !== null && typeof progress.page !== "string")
+      // oxlint-disable-next-line no-await-in-loop -- Each channel advances one durable page per tick.
+      const result = await api.playlistItems(
+        progress.uploads,
+        undefined,
+        progress.page ?? undefined,
+      );
+      // oxlint-disable-next-line no-await-in-loop -- Persist discovered IDs before advancing the cursor.
+      await enqueue(
+        env,
+        userId,
+        result.entries
+          .filter((entry) => !entry.publishedAt || Date.parse(entry.publishedAt) >= cutoff)
+          .map((entry) => ({ id: entry.videoId, channelId: channel.id })),
+      );
+      const reachedCutoff = result.entries.some(
+        (entry) => entry.publishedAt && Date.parse(entry.publishedAt) < cutoff,
+      );
+      const next =
+        result.next && !reachedCutoff
+          ? JSON.stringify({ uploads: progress.uploads, page: result.next })
+          : null;
+      // oxlint-disable-next-line no-await-in-loop -- Commit only the successfully consumed page.
+      await env.DB.prepare(
+        "UPDATE channels SET reconcile_cursor=?,last_reconciled_at=?,last_error=NULL WHERE user_id=? AND id=?",
       )
-        throw new YouTubeError("invalid_reconcile_cursor");
-    } else {
-      // oxlint-disable-next-line no-await-in-loop -- Resolve the actual uploads playlist instead of deriving its ID.
-      progress = { uploads: await api.uploads(channel.id), page: null };
+        .bind(next, Date.now(), userId, channel.id)
+        .run();
+    } catch (error) {
+      if (
+        !(error instanceof YouTubeError) ||
+        needsReconnect(error.code) ||
+        error.code.includes("quota_exhausted") ||
+        error.code === "tick_budget_exhausted" ||
+        error.code === "pipeline_lease_lost"
+      )
+        throw error;
+      const attempts = Math.min((progress.attempts ?? 0) + 1, 20);
+      const retryAt =
+        Date.now() +
+        (error.retryable ? Math.min(6 * 3600000, 60000 * 2 ** Math.min(attempts, 10)) : day);
+      // oxlint-disable-next-line no-await-in-loop -- A failed channel must not occupy the next pass's bounded batch.
+      await env.DB.prepare(
+        "UPDATE channels SET reconcile_cursor=?,last_error=? WHERE user_id=? AND id=?",
+      )
+        .bind(
+          JSON.stringify({ ...progress, attempts, retryAt, error: error.code }),
+          error.code,
+          userId,
+          channel.id,
+        )
+        .run();
     }
-    // oxlint-disable-next-line no-await-in-loop -- Each channel advances one durable page per tick.
-    const result = await api.playlistItems(progress.uploads, undefined, progress.page ?? undefined);
-    // oxlint-disable-next-line no-await-in-loop -- Persist discovered IDs before advancing the cursor.
-    await enqueue(
-      env,
-      userId,
-      result.entries
-        .filter((entry) => !entry.publishedAt || Date.parse(entry.publishedAt) >= cutoff)
-        .map((entry) => ({ id: entry.videoId, channelId: channel.id })),
-    );
-    const reachedCutoff = result.entries.some(
-      (entry) => entry.publishedAt && Date.parse(entry.publishedAt) < cutoff,
-    );
-    const next =
-      result.next && !reachedCutoff
-        ? JSON.stringify({ uploads: progress.uploads, page: result.next })
-        : null;
-    // oxlint-disable-next-line no-await-in-loop -- Commit only the successfully consumed page.
-    await env.DB.prepare(
-      "UPDATE channels SET reconcile_cursor=?,last_reconciled_at=?,last_error=NULL WHERE user_id=? AND id=?",
-    )
-      .bind(next, Date.now(), userId, channel.id)
-      .run();
   }
 }
 

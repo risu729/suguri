@@ -10,6 +10,7 @@ import {
 } from "../src/pipeline.ts";
 import { quotaDay } from "../src/store.ts";
 import { resetDatabase, seedUser } from "./helpers.ts";
+import { YouTube, YouTubeError } from "../src/youtube.ts";
 
 const user = "a".repeat(64);
 const otherUser = "b".repeat(64);
@@ -198,6 +199,252 @@ beforeEach(async () => {
 });
 
 describe("durable per-user processing", () => {
+  async function addChannel(id: string, cursor: string | null = null): Promise<void> {
+    await env.DB.prepare(
+      "INSERT INTO channels(user_id,id,callback_token,hub_secret,renew_after,reconcile_cursor) VALUES(?,?,'synthetic','synthetic',?,?)",
+    )
+      .bind(user, id, Date.now() + 86400000, cursor)
+      .run();
+  }
+
+  it("continues past a missing uploads playlist without reporting failed backfill as complete", async () => {
+    const missing = `UC${"a".repeat(22)}`;
+    await addChannel(missing);
+    await addChannel(channel);
+    const fake = provider();
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/channels") && url.searchParams.get("id") === missing)
+        return Response.json({ error: {} }, { status: 404 });
+      return fake.fetcher(input, init);
+    });
+    await runPipeline(env, user, fetcher);
+    const failed = await env.DB.prepare(
+      "SELECT reconcile_cursor,last_reconciled_at FROM channels WHERE user_id=? AND id=?",
+    )
+      .bind(user, missing)
+      .first<{ reconcile_cursor: string; last_reconciled_at: number }>();
+    expect(failed?.last_reconciled_at).toBe(0);
+    expect(JSON.parse(failed!.reconcile_cursor)).toMatchObject({
+      uploads: null,
+      page: null,
+      attempts: 1,
+      error: "youtube_http_404",
+    });
+    expect(
+      await env.DB.prepare(
+        "SELECT last_reconciled_at>0 AS complete,reconcile_cursor FROM channels WHERE user_id=? AND id=?",
+      )
+        .bind(user, channel)
+        .first(),
+    ).toEqual({ complete: 1, reconcile_cursor: null });
+  });
+
+  it("filters backoff channels before the batch limit", async () => {
+    await Promise.all(
+      Array.from({ length: 8 }, (_, n) =>
+        addChannel(
+          `UC${String(n).padStart(22, "0")}`,
+          JSON.stringify({
+            uploads: null,
+            page: null,
+            error: "youtube_http_404",
+            retryAt: Date.now() + 86400000,
+          }),
+        ),
+      ),
+    );
+    await addChannel(channel);
+    const fake = provider();
+    await runPipeline(env, user, fake.fetcher);
+    const requested = fake.fetcher.mock.calls
+      .map(([input]) => new URL(String(input)))
+      .filter((url) => url.pathname.endsWith("/channels"))
+      .map((url) => url.searchParams.get("id"));
+    expect(requested).toEqual([channel]);
+    expect(
+      await env.DB.prepare(
+        "SELECT last_reconciled_at>0 AS complete FROM channels WHERE user_id=? AND id=?",
+      )
+        .bind(user, channel)
+        .first(),
+    ).toEqual({ complete: 1 });
+  });
+
+  it("retains a failed page until its retry deadline and clears the failure after recovery", async () => {
+    await addChannel(
+      channel,
+      JSON.stringify({ uploads: "UUactualUploads123", page: "second-page" }),
+    );
+    let failing = true;
+    const pages: (string | null)[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (!url.pathname.endsWith("/playlistItems")) throw new Error("Unexpected request");
+      pages.push(url.searchParams.get("pageToken"));
+      return failing ? Response.json({ error: {} }, { status: 500 }) : Response.json({ items: [] });
+    });
+    await runPipeline(env, user, fetcher);
+    const row = await env.DB.prepare(
+      "SELECT reconcile_cursor FROM channels WHERE user_id=? AND id=?",
+    )
+      .bind(user, channel)
+      .first<{ reconcile_cursor: string }>();
+    const progress = JSON.parse(row!.reconcile_cursor) as { retryAt: number };
+    expect(JSON.parse(row!.reconcile_cursor)).toMatchObject({
+      uploads: "UUactualUploads123",
+      page: "second-page",
+      attempts: 1,
+      error: "youtube_http_500",
+    });
+    await runPipeline(env, user, fetcher);
+    expect(pages).toEqual(["second-page"]);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(progress.retryAt + 1);
+    try {
+      failing = false;
+      await runPipeline(env, user, fetcher);
+      expect(pages).toEqual(["second-page", "second-page"]);
+      expect(
+        await env.DB.prepare(
+          "SELECT reconcile_cursor,last_error,last_reconciled_at>0 AS complete FROM channels WHERE user_id=? AND id=?",
+        )
+          .bind(user, channel)
+          .first(),
+      ).toEqual({ reconcile_cursor: null, last_error: null, complete: 1 });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it.each([
+    "broken-json",
+    "null",
+    JSON.stringify({ uploads: "UUactualUploads123", page: null, retryAt: "invalid" }),
+    JSON.stringify({
+      uploads: "UUactualUploads123",
+      page: null,
+      retryAt: Number.MAX_SAFE_INTEGER + 1,
+    }),
+  ])("isolates malformed reconciliation state %s", async (cursor) => {
+    const bad = `UC${"a".repeat(22)}`;
+    await addChannel(bad, cursor);
+    await addChannel(channel);
+    await runPipeline(env, user, provider().fetcher);
+    expect(
+      await env.DB.prepare("SELECT last_error FROM channels WHERE user_id=? AND id=?")
+        .bind(user, bad)
+        .first(),
+    ).toEqual({ last_error: "invalid_reconcile_cursor" });
+    expect(
+      await env.DB.prepare(
+        "SELECT last_reconciled_at>0 AS complete FROM channels WHERE user_id=? AND id=?",
+      )
+        .bind(user, channel)
+        .first(),
+    ).toEqual({ complete: 1 });
+  });
+
+  it.each([
+    "reconnect_required",
+    "daily_quota_exhausted",
+    "provider_quota_exhausted",
+    "tick_budget_exhausted",
+    "pipeline_lease_lost",
+  ])("does not turn %s into a channel retry", async (code) => {
+    await addChannel(channel);
+    await addChannel(`UC${"c".repeat(22)}`);
+    const failure = vi
+      .spyOn(YouTube.prototype, "uploads")
+      .mockRejectedValue(new YouTubeError(code, true));
+    try {
+      await runPipeline(env, user, provider().fetcher);
+      expect(failure).toHaveBeenCalledTimes(1);
+      expect(
+        (
+          await env.DB.prepare(
+            "SELECT reconcile_cursor,last_reconciled_at FROM channels WHERE user_id=?",
+          )
+            .bind(user)
+            .all()
+        ).results,
+      ).toEqual([
+        { reconcile_cursor: null, last_reconciled_at: 0 },
+        { reconcile_cursor: null, last_reconciled_at: 0 },
+      ]);
+    } finally {
+      failure.mockRestore();
+    }
+  });
+
+  it("does not convert a database persistence failure into a channel retry", async () => {
+    await addChannel(channel);
+    const fake = provider();
+    fake.remote.set("UUactualUploads123", [{ id: "synthetic-item", videoId: video }]);
+    await env.DB.exec(
+      "CREATE TRIGGER reject_backfill BEFORE INSERT ON videos BEGIN SELECT RAISE(ABORT,'synthetic persistence failure'); END",
+    );
+    try {
+      await runPipeline(env, user, fake.fetcher);
+      expect(
+        await env.DB.prepare(
+          "SELECT reconcile_cursor,last_error,last_reconciled_at FROM channels WHERE user_id=?",
+        )
+          .bind(user)
+          .first(),
+      ).toEqual({ reconcile_cursor: null, last_error: null, last_reconciled_at: 0 });
+      expect(
+        await env.DB.prepare("SELECT last_error FROM settings WHERE user_id=?").bind(user).first(),
+      ).toEqual({ last_error: "processing_failed" });
+    } finally {
+      await env.DB.exec("DROP TRIGGER reject_backfill");
+    }
+  });
+
+  it("defers missing-duration premieres and processes them after their actual end", async () => {
+    await addVideo("pending", 0, "", video, null);
+    let ended = false;
+    const fake = provider();
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      if (!new URL(String(input)).pathname.endsWith("/videos")) return fake.fetcher(input, init);
+      return Response.json({
+        items: [
+          {
+            id: video,
+            snippet: {
+              channelId: channel,
+              channelTitle: "Synthetic",
+              title: "Synthetic premiere",
+              description: "",
+              publishedAt: new Date().toISOString(),
+              liveBroadcastContent: ended ? "none" : "upcoming",
+            },
+            ...(ended
+              ? {
+                  contentDetails: { duration: "PT3M" },
+                  liveStreamingDetails: { actualEndTime: new Date().toISOString() },
+                }
+              : {}),
+          },
+        ],
+      });
+    });
+    await runPipeline(env, user, fetcher);
+    expect(
+      await env.DB.prepare("SELECT status,last_error FROM videos WHERE user_id=?")
+        .bind(user)
+        .first(),
+    ).toEqual({ status: "deferred", last_error: null });
+    ended = true;
+    await env.DB.prepare("UPDATE videos SET next_attempt_at=0 WHERE user_id=?").bind(user).run();
+    await runPipeline(env, user, fetcher);
+    expect(
+      await env.DB.prepare("SELECT status,duration_seconds,last_error FROM videos WHERE user_id=?")
+        .bind(user)
+        .first(),
+    ).toEqual({ status: "review", duration_seconds: 180, last_error: null });
+    expect(fake.events).toEqual([]);
+  });
+
   it("does not retain a write intent when the insert preflight read definitively fails", async () => {
     await addVideo();
     const fake = provider();
