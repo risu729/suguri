@@ -7,13 +7,16 @@ import {
   retryUncertain,
   runPipeline,
 } from "./pipeline.ts";
-import { classify, validateRule } from "./rules.ts";
+import { classify, classifySelection, matchesRule, validateRule } from "./rules.ts";
+import { ruleTemplates } from "./rule-templates.ts";
 import { appState, audit, getRules, getSettings, reevaluate, withLease } from "./store.ts";
 import { HttpError, integer, record, string } from "./util.ts";
 
 export const operations = [
   "config",
   "state",
+  "channels_list",
+  "rules_templates",
   "settings",
   "sync",
   "process",
@@ -32,7 +35,14 @@ export const operations = [
   "connect",
 ] as const;
 export type Operation = (typeof operations)[number];
-export const readOperations = new Set<Operation>(["config", "state", "rules_preview", "connect"]);
+export const readOperations = new Set<Operation>([
+  "config",
+  "state",
+  "channels_list",
+  "rules_templates",
+  "rules_preview",
+  "connect",
+]);
 function id(value: unknown): string {
   if (!isCategoryId(value)) throw new HttpError(400, "invalid_id");
   return value;
@@ -86,6 +96,22 @@ export async function execute(
       ),
     };
   if (operation === "state") return appState(env.DB, principal, input);
+  if (operation === "rules_templates") return { templates: ruleTemplates };
+  if (operation === "channels_list") {
+    const offset = Number(input["cursor"] ?? 0);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000)
+      throw new HttpError(400, "invalid_cursor");
+    const query = input["q"] === undefined || input["q"] === "" ? "" : string(input["q"], 200);
+    const rows = await env.DB.prepare(
+      "SELECT id,title FROM channels WHERE user_id=? AND active=1 AND (?='' OR instr(lower(title),lower(?))>0 OR instr(id,?)>0) ORDER BY title,id LIMIT 51 OFFSET ?",
+    )
+      .bind(uid, query, query, query, offset)
+      .all<{ id: string; title: string }>();
+    return {
+      channels: rows.results.slice(0, 50),
+      nextCursor: rows.results.length > 50 ? offset + 50 : null,
+    };
+  }
   if (operation === "connect")
     return { url: `${appOrigin(env)}/auth/start`, requiresUserInteraction: true };
   if (operation === "rules_preview") {
@@ -97,19 +123,48 @@ export async function execute(
     }
     if (rule.categoryId) await categoryExists(env, uid, rule.categoryId);
     const settings = await getSettings(env.DB, uid);
+    const offset = Number(input["cursor"] ?? 0);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000)
+      throw new HttpError(400, "invalid_cursor");
     const rows = await env.DB.prepare(
-      "SELECT * FROM videos WHERE user_id=? AND published_at>=? ORDER BY discovered_at DESC LIMIT 200",
+      `SELECT v.*,
+       EXISTS(SELECT 1 FROM series s JOIN series_videos sv ON s.user_id=sv.user_id AND s.id=sv.series_id
+         WHERE s.user_id=v.user_id AND sv.video_id=v.id AND s.mode='hold') AS series_hold,
+       (SELECT s.category_id FROM series s JOIN series_videos sv ON s.user_id=sv.user_id AND s.id=sv.series_id
+         WHERE s.user_id=v.user_id AND sv.video_id=v.id AND s.mode='follow' AND s.category_id IS NOT NULL ORDER BY s.id LIMIT 1) AS series_category
+       FROM videos v WHERE v.user_id=? AND v.published_at>=? ORDER BY v.discovered_at DESC,v.id LIMIT 201 OFFSET ?`,
     )
-      .bind(uid, new Date(Date.now() - settings.backfillDays * 86400000).toISOString())
-      .all<VideoRow>();
+      .bind(uid, new Date(Date.now() - settings.backfillDays * 86400000).toISOString(), offset)
+      .all<VideoRow & { series_hold: number; series_category: string | null }>();
+    const candidate = { ...rule, id: rule.id || crypto.randomUUID() };
+    const effectiveRules = [
+      ...(await getRules(env.DB, uid)).filter((existing) => existing.id !== rule.id),
+      candidate,
+    ];
     const matches = rows.results
+      .slice(0, 200)
+      .filter((row) => candidate.enabled && matchesRule(metadataFromRow(row), candidate))
       .map((row) => ({
         id: row.id,
         title: row.title,
-        decision: classify(metadataFromRow(row), [{ ...rule, id: rule.id || "preview" }]),
-      }))
-      .filter((row) => row.decision.reason === `rule:${rule.id || "preview"}`);
-    return { matches, total: matches.length, sampled: rows.results.length };
+        channelTitle: row.channel_title,
+        thumbnailUrl: row.thumbnail_url,
+        manualOverride: !!row.manual_override,
+        decision: classify(metadataFromRow(row), [candidate]),
+        effectiveDecision: row.manual_override
+          ? { status: row.status, categoryId: row.category_id, reason: row.reason }
+          : classifySelection(metadataFromRow(row), effectiveRules, {
+              hold: !!row.series_hold,
+              categoryId: row.series_category,
+            }),
+      }));
+    return {
+      ruleId: candidate.id,
+      matches,
+      total: matches.length,
+      sampled: Math.min(rows.results.length, 200),
+      nextCursor: rows.results.length > 200 ? offset + 200 : null,
+    };
   }
   if (operation === "process") return runPipeline(env, uid);
   if (operation === "videos_update" && input["action"] === "retry_missing") {

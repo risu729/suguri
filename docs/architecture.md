@@ -59,6 +59,31 @@ mapping in `MCP_USERS` to the intended Access user; it is not granted all users'
 data. The mapping configures authentication, not Google authorization. Browser
 requests to MCP also require CSRF protection. Cross-origin requests are rejected.
 
+### Selection setup and previews
+
+`rules_templates` (`GET /api/rules/templates`) returns editable drafts for music,
+public performances, selected-channel singing/talk, uploads/archives, review and
+exclusion. Templates do not seed preferences, choose a category, or subscribe a
+channel. The UI requires a channel for channel-specific templates. These remain
+literal keyword rules, not semantic or AI classification; preview ambiguous
+titles before saving. Public performances match both uploads and archives,
+including free opening broadcasts, while unfinished streams remain deferred.
+
+`channels_list` (`GET /api/channels`) searches only the caller's active catalog by
+title or ID. It returns at most 50 IDs/titles per page, plus `nextCursor`; it never
+returns callback capabilities or hub secrets and does not call YouTube.
+
+`rules_preview` reads up to 200 recent candidates per page and returns `nextCursor` when
+more remain. Each match includes the candidate rule's decision and the effective
+decision after existing priorities, series holds/follows and sticky manual choices.
+Clients must reuse the returned `ruleId` as `id` on subsequent preview pages and on
+`rules_save`. The UI retains a draft ID across preview and save so equal-priority
+ordering stays stable. The preview is read-only and does not claim playlist insertion,
+provider availability, or budget acceptance. A series shortcut uses the existing
+`series_save` operation; switching to follow includes recent candidates within the
+configured backfill window, as stated in the UI. No viewing history or automatic
+catch-up detection is implied.
+
 OAuth connection links are available to MCP, but Google consent remains a human
 browser action. Client login/Access transport compatibility must be verified with
 the actual MCP client or trusted Access gateway before deployment is accepted.

@@ -1,0 +1,202 @@
+import type { Rule } from "./model.ts";
+
+export interface RuleTemplate {
+  id: string;
+  name: string;
+  description: string;
+  requiresChannel: boolean;
+  rule: Omit<Rule, "id" | "categoryId" | "channelId">;
+}
+
+const promotional = [
+  "teaser",
+  "ティーザー",
+  "ティザー",
+  "trailer",
+  "preview",
+  "予告",
+  "告知",
+  "ダイジェスト",
+  "digest",
+  "振り返り",
+  "切り抜き",
+  "メイキング",
+  "making",
+  "behind the scenes",
+  "クロスフェード",
+  "crossfade",
+  "解説",
+  "reaction",
+  "リアクション",
+];
+const singingMarkers = ["歌枠", "歌配信", "singing stream", "karaoke", "カラオケ"];
+
+function template(
+  id: string,
+  name: string,
+  description: string,
+  requiresChannel: boolean,
+  values: Partial<RuleTemplate["rule"]>,
+): RuleTemplate {
+  return {
+    id,
+    name,
+    description,
+    requiresChannel,
+    rule: {
+      name,
+      priority: 100,
+      enabled: true,
+      action: "categorize",
+      titleIncludes: [],
+      titleExcludes: [],
+      descriptionIncludes: [],
+      minDurationSeconds: null,
+      maxDurationSeconds: null,
+      kind: "any",
+      ...values,
+    },
+  };
+}
+
+// These are editable, opt-in drafts, never installed as user preferences.
+export const ruleTemplates: RuleTemplate[] = [
+  template(
+    "music",
+    "楽曲・MV・歌ってみた",
+    "明示的な楽曲の表記を対象にします。短い動画も長さだけでは除外しません。",
+    false,
+    {
+      titleIncludes: [
+        "music video",
+        "【MV】",
+        "[MV]",
+        "lyric video",
+        "official audio",
+        "オリジナルMV",
+        "歌ってみた",
+        "(cover)",
+        "cover by",
+        "covered by",
+        "弾き語りcover",
+      ],
+      titleExcludes: [...promotional, "同時視聴", ...singingMarkers],
+    },
+  ),
+  template(
+    "performance",
+    "音楽の公演・ライブ映像",
+    "公演を示す表記を対象にします。会場中継・過去の公演映像・冒頭無料配信を含み、配信中は終了を待ちます。単なる「ライブ」だけでは判定しません。",
+    false,
+    {
+      priority: 80,
+      titleIncludes: [
+        "ワンマンライブ",
+        "ワンマンライヴ",
+        "ソロライブ",
+        "ソロライヴ",
+        "周年記念ライブ",
+        "周年ライブ",
+        "生誕ライブ",
+        "生誕祭ライブ",
+        "誕生日ライブ",
+        "3Dライブ",
+        "3D LIVE",
+        "3DLIVE",
+        "ライブ映像",
+        "ライヴ映像",
+        "公演映像",
+        "ライブ全編",
+        "ライブ本編",
+        "LIVEより",
+        "DOME TOUR",
+        "concert",
+        "live performance",
+        "live at",
+        "anniversary live",
+        "birthday live",
+        "solo live",
+        "one man live",
+        "one-man live",
+        "oneman live",
+      ],
+      titleExcludes: [
+        ...promotional,
+        "同時視聴",
+        "watchalong",
+        "watch along",
+        "歌枠",
+        "歌配信",
+        "singing stream",
+        "karaoke",
+        "カラオケ",
+        "雑談",
+        "just chatting",
+        "おつかれ",
+        "お疲れ",
+        "アフタートーク",
+        "打ち上げ",
+        "感想",
+        "説明会",
+        "質問",
+        "お知らせ",
+        "チケット",
+        "受付",
+        "coming soon",
+        "announcement",
+      ],
+    },
+  ),
+  template(
+    "singing",
+    "指定チャンネルの歌枠",
+    "選んだチャンネルの歌枠・歌配信を対象にし、配信終了後に保存します。",
+    true,
+    {
+      priority: 90,
+      titleIncludes: singingMarkers,
+      titleExcludes: [...promotional, "同時視聴"],
+      kind: "archive",
+    },
+  ),
+  template(
+    "talk",
+    "指定チャンネルの雑談",
+    "選んだチャンネルの雑談配信を対象にし、配信終了後に保存します。",
+    true,
+    {
+      priority: 90,
+      titleIncludes: ["雑談", "朝活", "just chatting", "free talk", "freetalk"],
+      titleExcludes: [...promotional, "歌枠", "歌配信", "karaoke", "カラオケ", "同時視聴"],
+      kind: "archive",
+    },
+  ),
+  template(
+    "channel-upload",
+    "指定チャンネルの通常動画",
+    "選んだチャンネルの通常アップロードを保存します。配信アーカイブと分けられます。",
+    true,
+    { priority: 200, kind: "upload" },
+  ),
+  template(
+    "channel-archive",
+    "指定チャンネルの配信アーカイブ",
+    "選んだチャンネルの配信を、終了後に保存します。",
+    true,
+    { priority: 200, kind: "archive" },
+  ),
+  template(
+    "channel-review",
+    "指定チャンネルは個別に確認",
+    "選んだチャンネルは自動保存せず、受信箱で選びます。",
+    true,
+    { priority: 30, action: "review" },
+  ),
+  template(
+    "channel-exclude",
+    "指定チャンネルを対象外にする",
+    "選んだチャンネルの動画を自動整理の対象外にします。YouTubeの登録は解除しません。",
+    true,
+    { priority: 30, action: "exclude" },
+  ),
+];
