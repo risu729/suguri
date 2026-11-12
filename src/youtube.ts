@@ -191,7 +191,7 @@ export class YouTube {
   ) {
     this.env = env;
     this.userId = userId;
-    this.fetcher = fetcher;
+    this.fetcher = (input, init) => fetcher(input, init);
     this.deadline = deadline;
     this.leaseOwner = leaseOwner;
   }
