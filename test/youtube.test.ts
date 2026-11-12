@@ -28,6 +28,16 @@ beforeEach(async () => {
 });
 
 describe("YouTube provider boundary", () => {
+  it("invokes the transport without rebinding the Workers fetch receiver", async () => {
+    const fetcher: typeof fetch = function (this: unknown) {
+      return fetch.call(this, 'data:application/json,{"items":[]}');
+    };
+    await expect(new YouTube(env, user, fetcher).subscriptions(null)).resolves.toEqual({
+      channels: [],
+      next: null,
+    });
+  });
+
   it("rejects redirects without forwarding bearer credentials", async () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
       expect(new Request(input, init).redirect).toBe("manual");
