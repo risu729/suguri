@@ -55,6 +55,7 @@ update package.json, run `mise exec -- bun install --lockfile-only`, then
 - [Activation and acceptance](docs/activation.md)
 - [Research archive and provenance](docs/research/README.md)
 - [Setup decisions and reference repositories](docs/setup.md)
+- [Roadmap](docs/roadmap.md)
 - [Implementation backlog](docs/backlog.md)
 
 This is a public repository. No open-source license has been selected.
