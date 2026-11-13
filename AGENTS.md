@@ -11,14 +11,14 @@ say "an agent" and do not name the agent product that does a piece of work.
   original language under `docs/research/archive/`. Japanese stays only where its
   exact wording is product data, such as text the web UI shows, as a term inside
   an English sentence.
-- Talk with the owner in Japanese outside the repository (chat and threads).
+- Talk with the owner in Japanese in chat and threads. Text on GitHub (PR and issue
+  bodies and comments) stays in English.
 - Show the concrete thing (a data shape, a real example value, a file or code)
   instead of coining a term for it.
 - Write every PR, issue, commit, workflow run and URL as a Markdown link, never a
-  bare `#123`, SHA or URL, in repository text and in messages to the owner. Use
-  short SHAs.
-- Give times in UTC. In messages to the owner, add JST in parentheses, for example
-  09:20 UTC (18:20 JST).
+  bare `#123`, SHA or URL, in docs, PR and issue text and messages to the owner.
+  Use short SHAs.
+- Give times in UTC with JST in parentheses, for example 09:20 UTC (18:20 JST).
 
 ## Continuing the work
 
@@ -29,9 +29,9 @@ say "an agent" and do not name the agent product that does a piece of work.
   the owner's list what an agent can do itself.
 - Work in cloud sessions first. Use the owner's device only for a check that
   cannot be done anywhere else.
-- Past decisions, ADRs and earlier owner instructions are not authoritative by
-  themselves; judge them on merit against the code and evidence, and propose a
-  better design to the owner when one exists.
+- Past decisions, including ADRs, are not authoritative by themselves; judge them on
+  merit against the code and evidence, and propose a better design to the owner when one
+  exists.
 - While a design is under discussion with the owner, write no ADR, code or PR for
   it until the owner approves. A plan or design proposal gets an independent
   agent review (facts against the code, security and permission impact) before it
@@ -59,7 +59,8 @@ say "an agent" and do not name the agent product that does a piece of work.
 - A PR that changes code or tests gets an independent review by an agent that did
   not write it, before merge. The PR body states what the review checked and which
   commands ran, and what was not run. Changes pushed after the review are reviewed
-  again.
+  again. A docs-only PR needs passing checks; a plan or design proposal in it was
+  already reviewed before it went to the owner.
 - Never skip, disable, quarantine or loosen a test or check to make CI pass. Fix
   the cause.
 - An agent merges its own PR with squash once the review findings are fixed or
