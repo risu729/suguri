@@ -50,6 +50,7 @@ update package.json, run `mise exec -- bun install --lockfile-only`, then
 ## Design and research
 
 - [Architecture](docs/architecture.md)
+- [Architecture decision records](docs/adr/README.md)
 - [Generalized product requirements](docs/product-requirements.md)
 - [Activation and acceptance](docs/activation.md)
 - [Research archive and provenance](docs/research/README.md)
