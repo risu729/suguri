@@ -3,8 +3,7 @@
 This is the work order for Suguri. The owner adopted it on 2026-11-13
 (05:52 UTC) against main `f749988`. A merged PR is not a stopping point: continue
 with the next unit of the current phase until its done-when holds, then the next
-phase. A thread may take a unit from a later phase when it does not depend on
-unfinished work.
+phase.
 
 Issues track individual items; this page names which items belong to which phase.
 Update this page in the PR that changes a phase's scope, order or outcome.
@@ -13,9 +12,9 @@ Update this page in the PR that changes a phase's scope, order or outcome.
 shown.
 
 Every step that touches production (applying a migration, dispatching Deploy,
-changing infrastructure, real-account writes beyond the enabled automation) needs
-the owner's approval each time, as [activation and acceptance](activation.md)
-requires.
+changing infrastructure, registering rules or other real-account writes beyond the
+enabled automation) needs the owner's approval each time, as
+[activation and acceptance](activation.md) requires.
 
 ## Phase 1 — Bring production up to main
 
@@ -24,16 +23,19 @@ bulk review) merged on 2026-11-12 (11:00 UTC) but has not been deployed. Its cod
 reads the `needs_classification` column added by
 [`0002_reclassification.sql`](../migrations/0002_reclassification.sql), so the
 migration must reach the production D1 database before the Worker is deployed.
+On 2026-11-12 this phase stopped waiting for the owner to sign in to Cloudflare.
 
 1. Apply `migrations/0002_reclassification.sql` to the production database through
-   the bootstrap procedure in [activation](activation.md).
+   the separately authorized bootstrap procedure that
+   [activation](activation.md#cloudflare-setup) refers to.
 2. Dispatch the [Deploy workflow](../.github/workflows/deploy.yml) on current `main`.
 3. Read back the new behavior from the authenticated application.
 
-**Done when:** the deployed Worker version matches a stated `main` SHA that
-includes [PR #24](https://github.com/risu729/suguri/pull/24), the migration is
-recorded as applied, and a dated verification record lists the deploy run and the
-readback.
+**Done when:** a Deploy run on a stated `main` SHA that includes
+[PR #24](https://github.com/risu729/suguri/pull/24) has verified its version at
+100% traffic, the migration is recorded as applied, and a dated verification
+record lists the deploy run and a readback of the new behavior from the
+authenticated application.
 
 ## Phase 2 — Production acceptance
 
@@ -48,11 +50,11 @@ Close the gaps listed under "Still unverified" in the
 - Recovery of uploads playlists that returned HTTP 404.
 - The remaining account, series, move and removal cases in
   [activation and acceptance](activation.md).
+- Named desktop or hosted MCP-client onboarding and service-identity mapping.
 
 **Done when:** each item above has dated evidence in a verification record, or is
 listed there as waiting on a named condition, and
-[issue #17](https://github.com/risu729/suguri/issues/17) is closed or names what is
-still missing.
+[issue #17](https://github.com/risu729/suguri/issues/17) is closed.
 
 ## Phase 3 — Owner-selected channels for the remaining categories
 
@@ -60,7 +62,7 @@ Some categories select by channel and still have no channel list. The owner pick
 the channels; an agent then registers them as rules in the running installation.
 The owner's choices are runtime data and stay out of this public repository.
 
-**Done when:** every category the owner uses has its channel scope set in
+**Done when:** every category the owner names has its channel scope set in
 production, and a preview of the effective selection shows the expected channels.
 
 ## Phase 4 — AI classification
@@ -78,7 +80,7 @@ owner approved.
 ## Phase 5 — Later work
 
 Taken in any order after the phases above, from
-[follow-up capabilities](backlog.md#follow-up-capabilities):
+[follow-up capabilities](backlog.md#follow-up-capabilities), including:
 
 - UI improvements found during phases 2 and 3.
 - Account and data deletion, and privacy controls before broader multi-user use.
