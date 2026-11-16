@@ -25,6 +25,13 @@ reads the `needs_classification` column added by
 migration must reach the production D1 database before the Worker is deployed.
 On 2026-11-12 this phase stopped waiting for the owner to sign in to Cloudflare.
 
+Status on 2026-11-16: steps 1 and 2 are done and recorded in the
+[2026-11-16 verification record](verification-2026-11-16.md) (migration applied at
+16:39 UTC, Deploy run
+[43909944955](https://github.com/risu729/suguri/actions/runs/43909944955) on
+`1d1c372` at 100% traffic). Step 3, the readback from the authenticated
+application, is still open.
+
 1. Apply `migrations/0002_reclassification.sql` to the production database through
    the separately authorized bootstrap procedure that
    [activation](activation.md#cloudflare-setup) refers to.
