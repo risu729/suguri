@@ -52,6 +52,23 @@ say "an agent" and do not name the agent product that does a piece of work.
   distinct. Docs state what the code does today.
 - Preserve archived research byte-for-byte and record new decisions separately.
 
+## Configuration defaults
+
+- Do not set a configuration option to the value its tool already uses. Leave it unset
+  unless the repository needs a different value. This covers every tool configuration
+  here, including `.github/renovate.json`, `mise.toml`, `hk.pkl`, `tsconfig.json`,
+  `bunfig.toml` and the linter and formatter configurations. Check the default in the
+  tool's source at the version in use, not in its documentation.
+- Keep a value equal to the default when it overrides a different value from
+  an extended preset or an earlier rule, such as a Renovate `packageRules`
+  entry that restores a default the
+  [shared preset](https://github.com/risu729/renovate-config) changes, and say
+  in a comment what it overrides.
+- The default must be the same in every tool version the repository allows,
+  such as each mise version from `min_version`, and on every platform it
+  supports. When it differs, raise the minimum in the same change or keep the
+  value with a comment that says why.
+
 ## Pull requests and merging
 
 - One PR per scope: each PR does one independently reviewable thing, with its
