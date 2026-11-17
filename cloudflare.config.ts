@@ -11,6 +11,9 @@ export default defineConfig({
     name: "suguri",
     entrypoint,
     compatibilityDate: "2026-11-11",
+    // Set although cf leaves it unset otherwise: an unset value sends no preview
+    // setting at deploy (getSubdomainValues), so it would not turn preview URLs off.
+    previewUrls: false,
     domains: ["suguri.takuk.me"],
     env: {
       DB: bindings.d1({ name: "suguri-catalog", ...(catalogId ? { id: catalogId } : {}) }),
