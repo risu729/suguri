@@ -26,7 +26,6 @@ betterleaks = "v1.10.1"
 
 [settings]
 lockfile = true
-lockfile_mode = "generate"
 lockfile_platforms = ["linux-x64", "windows-x64"]
 
 [settings.npm]
@@ -42,7 +41,7 @@ run = "aube install --frozen-lockfile"
 [tasks.typecheck]
 description = "Check TypeScript without emitting files."
 depends = ["types"]
-run = "tsc --noEmit"
+run = "tsc"
 
 [tasks.types]
 description = "Generate binding and runtime types from native Cloudflare configuration."

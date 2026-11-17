@@ -11,7 +11,8 @@ export default defineConfig({
     name: "suguri",
     entrypoint,
     compatibilityDate: "2026-11-11",
-    workersDev: false,
+    // Set explicitly: for an unset value cf sends no preview setting at deploy
+    // (getSubdomainValues) and leaves it to the API.
     previewUrls: false,
     domains: ["suguri.takuk.me"],
     env: {
@@ -28,6 +29,8 @@ export default defineConfig({
     observability: {
       // OAuth codes and WebSub capabilities appear in request URLs.
       // Use the redacted application audit ledger until edge logging is reviewed.
+      // Set explicitly: cf sends `enabled: false` for an unset value only when it
+      // updates an existing Worker; a first upload or one with migrations sends nothing.
       enabled: false,
     },
   },
