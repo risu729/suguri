@@ -100,8 +100,12 @@ say "an agent" and do not name the agent product that does a piece of work.
   while its sources are unchanged and `node_modules` exists. Set only what
   differs from the provider's defaults, and do not add an install task, an
   install command inside a task, or a CI install step before `mise run`. Run
-  `mise deps` explicitly only before a step that needs `node_modules` without
-  going through mise. `[deps]` needs `experimental = true`.
+  `mise deps` explicitly only when no earlier `mise run` or `mise exec` in the
+  same job has installed them, before a step that needs `node_modules` without
+  going through mise. `[deps]` needs `experimental = true`. To update `bun.lock`
+  after editing `package.json`, run
+  `mise exec --no-deps -- bun install --lockfile-only`: without `--no-deps`, the
+  frozen install refuses the change.
 - Use native `cloudflare.config.ts` and the locked cf CLI. Generate platform types.
 
 ## Production and data

@@ -43,7 +43,7 @@ do not deploy or access a real YouTube account.
 
 Dependencies use exact versions. Bun maintains `bun.lock`; aube installs it
 with integrity checks and reviewed install scripts. To change dependencies,
-update package.json and run `mise exec -- bun install --lockfile-only`; the next
+update package.json and run `mise exec --no-deps -- bun install --lockfile-only`; the next
 `mise run` or `mise exec` installs the result. Commit the lockfile changes with
 the dependency update.
 
