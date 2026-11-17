@@ -32,7 +32,6 @@ Install [mise](https://mise.jdx.dev/), then run:
 ```sh
 mise trust
 mise install --locked
-mise run install
 mise run hooks:install
 mise run dev
 ```
@@ -42,10 +41,11 @@ repository lint, generated-type checking, local Workers tests, a production
 build, built-bundle smoke tests, and a prebuilt upload dry run. These checks
 do not deploy or access a real YouTube account.
 
-Dependencies use exact versions. Bun maintains `bun.lock`; aube installs it
-with integrity checks and reviewed install scripts. To change dependencies,
-update package.json, run `mise exec -- bun install --lockfile-only`, then
-`mise run install`. Commit the lockfile changes with the dependency update.
+Dependencies use exact versions. Bun maintains `bun.lock`; aube installs it with
+integrity checks and reviewed install scripts. To change dependencies, update
+package.json and run `mise exec --no-deps -- bun install --lockfile-only`; the
+next `mise run` or `mise exec` installs the result. Commit the lockfile changes
+with the dependency update.
 
 ## Design and research
 
