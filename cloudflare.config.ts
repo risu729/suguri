@@ -11,8 +11,6 @@ export default defineConfig({
     name: "suguri",
     entrypoint,
     compatibilityDate: "2026-11-11",
-    workersDev: false,
-    previewUrls: false,
     domains: ["suguri.takuk.me"],
     env: {
       DB: bindings.d1({ name: "suguri-catalog", ...(catalogId ? { id: catalogId } : {}) }),
@@ -28,6 +26,8 @@ export default defineConfig({
     observability: {
       // OAuth codes and WebSub capabilities appear in request URLs.
       // Use the redacted application audit ledger until edge logging is reviewed.
+      // Set although off is the default: a deploy without it sends no observability
+      // setting and so would not turn edge logging off.
       enabled: false,
     },
   },
