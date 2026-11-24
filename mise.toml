@@ -3,7 +3,7 @@
 min_version = "2026.11.3"
 
 [tools]
-aube = "v2.10.1"
+aube = "v2.11.0"
 bun = "1.4.5"
 node = "26.13.1"
 python = "3.14.10"
